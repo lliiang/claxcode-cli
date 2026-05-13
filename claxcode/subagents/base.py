@@ -29,8 +29,8 @@ class Subagent:
         self.max_iterations = max_iterations
         self.provider = get_provider()
         self.context = ContextManager(
-            system_prompt=f"{DEFAULT_SYSTEM_PROMPT}\n\nYou are a {agent_type} subagent. "
-            f"Focus on your specialty and report findings concisely."
+            system_prompt=f"{DEFAULT_SYSTEM_PROMPT}\n\n你是一个 {agent_type} 子代理。"
+            f"专注于你的专业领域并简洁地报告发现。"
         )
 
     async def run(self) -> AsyncIterator[dict[str, Any]]:
@@ -101,8 +101,8 @@ class Subagent:
     async def _execute_tool(self, name: str, args: dict) -> str:
         t = registry.get(name)
         if t is None:
-            return f"Error: tool {name} not found"
+            return f"错误：工具 {name} 不存在"
         try:
             return await t.execute(**args)
         except Exception as exc:
-            return f"Error: {exc}"
+            return f"错误：{exc}"

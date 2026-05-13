@@ -1,7 +1,6 @@
 """Plugin system (stub for Phase 5)."""
 
 from pathlib import Path
-from typing import Any
 
 
 class PluginManager:

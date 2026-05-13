@@ -7,6 +7,26 @@ from typing import Any
 from claxcode.tools.base import Tool
 from claxcode.tools.registry import tool
 
+# Global flag for tool cancellation
+_tool_cancelled = False
+
+
+def set_tool_cancelled() -> None:
+    """Set the tool cancellation flag."""
+    global _tool_cancelled
+    _tool_cancelled = True
+
+
+def is_tool_cancelled() -> bool:
+    """Check if tool execution has been cancelled."""
+    return _tool_cancelled
+
+
+def reset_tool_cancelled() -> None:
+    """Reset the tool cancellation flag."""
+    global _tool_cancelled
+    _tool_cancelled = False
+
 
 @tool
 class RunShell(Tool):

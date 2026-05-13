@@ -16,16 +16,16 @@ from claxcode.tools.registry import tool
 
 @tool
 class Calculate(Tool):
-    """A simple calculator tool as a custom extension example."""
+    """一个简单的计算器工具，作为自定义扩展示例。"""
 
     name = "calculate"
-    description = "Evaluate a mathematical expression safely."
+    description = "安全地计算数学表达式。"
     input_schema = {
         "type": "object",
         "properties": {
             "expression": {
                 "type": "string",
-                "description": "Math expression to evaluate, e.g., '2 + 2 * 3'",
+                "description": "要计算的数学表达式，例如 '2 + 2 * 3'",
             },
         },
         "required": ["expression"],
@@ -40,4 +40,4 @@ class Calculate(Tool):
             result = eval(expression, allowed, {"__builtins__": {}})  # noqa: S307
             return str(result)
         except Exception as exc:
-            return f"Error evaluating expression: {exc}"
+            return f"计算表达式时出错: {exc}"

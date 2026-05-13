@@ -10,7 +10,7 @@ from claxcode.tools.registry import tool
 @tool
 class ReadFile(Tool):
     name = "read_file"
-    description = "Read the contents of a text file."
+    description = "读取文本文件的内容。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -24,17 +24,17 @@ class ReadFile(Tool):
     async def execute(self, path: str, **kwargs: Any) -> str:
         target = Path(path)
         if not target.exists():
-            return f"Error: File not found: {path}"
+            return f"错误：文件不存在: {path}"
         try:
             return target.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            return f"Error: File appears to be binary: {path}"
+            return f"错误：文件可能是二进制文件: {path}"
 
 
 @tool
 class WriteFile(Tool):
     name = "write_file"
-    description = "Write content to a file (overwrite or create)."
+    description = "将内容写入文件（覆盖或创建）。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -50,13 +50,13 @@ class WriteFile(Tool):
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return f"File written: {path}"
+        return f"文件已写入: {path}"
 
 
 @tool
 class StrReplaceFile(Tool):
     name = "str_replace_file"
-    description = "Replace an exact string within a file."
+    description = "替换文件中的指定字符串。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -73,10 +73,10 @@ class StrReplaceFile(Tool):
     async def execute(self, path: str, old: str, new: str, replace_all: bool = False, **kwargs: Any) -> str:
         target = Path(path)
         if not target.exists():
-            return f"Error: File not found: {path}"
+            return f"错误：文件不存在: {path}"
         text = target.read_text(encoding="utf-8")
         if old not in text:
-            return f"Error: Old string not found in {path}"
+            return f"错误：在 {path} 中未找到要替换的字符串"
         if replace_all:
             text = text.replace(old, new)
             count = text.count(new) - target.read_text(encoding="utf-8").count(new) + 1
@@ -84,13 +84,13 @@ class StrReplaceFile(Tool):
             text = text.replace(old, new, 1)
             count = 1
         target.write_text(text, encoding="utf-8")
-        return f"Replaced {count} occurrence(s) in {path}"
+        return f"已在 {path} 中替换 {count} 处"
 
 
 @tool
 class CreateDirectory(Tool):
     name = "create_directory"
-    description = "Create a directory and any necessary parent directories."
+    description = "创建目录及必要的父目录。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -104,13 +104,13 @@ class CreateDirectory(Tool):
     async def execute(self, path: str, **kwargs: Any) -> str:
         target = Path(path)
         target.mkdir(parents=True, exist_ok=True)
-        return f"Directory created: {path}"
+        return f"目录已创建: {path}"
 
 
 @tool
 class RenameFile(Tool):
     name = "rename_file"
-    description = "Rename or move a file or directory."
+    description = "重命名或移动文件/目录。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -126,6 +126,6 @@ class RenameFile(Tool):
         source = Path(old_path)
         dest = Path(new_path)
         if not source.exists():
-            return f"Error: Source not found: {old_path}"
+            return f"错误：源文件不存在: {old_path}"
         source.rename(dest)
-        return f"Renamed {old_path} -> {new_path}"
+        return f"已重命名 {old_path} -> {new_path}"

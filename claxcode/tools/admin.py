@@ -13,15 +13,15 @@ class AdminAddTool(Tool):
 
     name = "admin_add_tool"
     description = (
-        "Register a new tool dynamically. "
-        "Provide the tool name, description, JSON input schema, and the execute() method body as a string. "
-        "The code runs in a restricted environment with only basic builtins."
+        "动态注册新工具。"
+        "提供工具名称、描述、JSON 输入模式和 execute() 方法体作为字符串。"
+        "代码在受限环境中运行，仅包含基本内置函数。"
     )
     input_schema = {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Unique tool identifier"},
-            "description": {"type": "string", "description": "What the tool does"},
+            "name": {"type": "string", "description": "唯一的工具标识符"},
+            "description": {"type": "string", "description": "工具的功能描述"},
             "category": {"type": "string", "default": "custom"},
             "required_permissions": {
                 "type": "array",
@@ -30,13 +30,13 @@ class AdminAddTool(Tool):
             },
             "input_schema": {
                 "type": "object",
-                "description": "JSON Schema for the tool's arguments",
+                "description": "工具参数的 JSON Schema",
             },
             "code": {
                 "type": "string",
                 "description": (
-                    "Python source code for the execute() method body. "
-                    "Use 'self' and standard library only. Return a string."
+                    "execute() 方法体的 Python 源代码。"
+                    "仅使用 'self' 和标准库。返回一个字符串。"
                 ),
             },
         },
@@ -56,11 +56,11 @@ class AdminAddTool(Tool):
         **kwargs: Any,
     ) -> str:
         if registry.get(name):
-            return f"Error: Tool '{name}' already exists."
+            return f"错误：工具 '{name}' 已存在。"
 
         # Sanitize name
         if not name.replace("_", "").isalnum():
-            return "Error: Tool name must be alphanumeric or underscores only."
+            return "错误：工具名称只能包含字母数字或下划线。"
 
         safe_name = "".join(ch if ch.isalnum() else "_" for ch in name)
         class_name = f"Dyn{safe_name.title()}"
@@ -87,12 +87,20 @@ class {class_name}(Tool):
         try:
 {wrapped_code}
         except Exception as _exc:
-            return f"Error in {repr(name)}: {{_exc}}"
+            return f"{repr(name)} 中出错: {{_exc}}"
 """
 
         # Restricted execution environment
         allowed_builtins = {
             "__build_class__": __build_class__,
+            "Exception": Exception,
+            "BaseException": BaseException,
+            "ValueError": ValueError,
+            "TypeError": TypeError,
+            "KeyError": KeyError,
+            "IndexError": IndexError,
+            "AttributeError": AttributeError,
+            "RuntimeError": RuntimeError,
             "len": len,
             "str": str,
             "int": int,
@@ -145,12 +153,12 @@ class {class_name}(Tool):
         try:
             exec(class_source, namespace)  # noqa: S102
         except Exception as exc:
-            return f"Error compiling tool: {exc}\n\nGenerated source:\n{class_source}"
+            return f"编译工具时出错: {exc}\n\n生成的源代码:\n{class_source}"
 
         tool_cls = namespace.get(class_name)
         if tool_cls is None or not isinstance(tool_cls, type) or not issubclass(tool_cls, Tool):
-            return "Error: Compiled class is not a valid Tool subclass."
+            return "错误：编译的类不是有效的 Tool 子类。"
 
         instance = tool_cls()
         registry.register(instance)
-        return f"✅ Tool '{name}' registered successfully in category '{category}'."
+        return f"✅ 工具 '{name}' 已成功注册到类别 '{category}'。"

@@ -12,7 +12,7 @@ from claxcode.tools.registry import tool
 @tool
 class GlobSearch(Tool):
     name = "glob_search"
-    description = "Find files matching a glob pattern recursively."
+    description = "递归查找匹配 glob 模式的文件。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -31,14 +31,14 @@ class GlobSearch(Tool):
             if p.is_file() and fnmatch.fnmatch(str(p.relative_to(root)), pattern):
                 matches.append(str(p.relative_to(root)))
         if not matches:
-            return "No files found."
+            return "未找到文件。"
         return "\n".join(matches)
 
 
 @tool
 class GrepSearch(Tool):
     name = "grep_search"
-    description = "Search file contents using a regex pattern."
+    description = "使用正则表达式搜索文件内容。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -82,14 +82,14 @@ class GrepSearch(Tool):
                         if regex.search(line):
                             results.append(f"{p.relative_to(root)}:{i}:{line}")
         if not results:
-            return "No matches found."
+            return "未找到匹配项。"
         return "\n".join(results[:250])
 
 
 @tool
 class ExploreCodebase(Tool):
     name = "explore_codebase"
-    description = "High-level exploration: list top-level files and summarize structure."
+    description = "高级探索：列出顶层文件并总结结构。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -118,4 +118,4 @@ class ExploreCodebase(Tool):
 
         if root.exists():
             walk(root, 0)
-        return "\n".join(lines) if lines else "Empty directory."
+        return "\n".join(lines) if lines else "空目录。"

@@ -18,7 +18,7 @@ class SessionORM(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), default="New Session")
+    name: Mapped[str] = mapped_column(String(255), default="新会话")
     project_path: Mapped[str] = mapped_column(String(512), default=".")
     permission_mode: Mapped[str] = mapped_column(String(32), default="ask")
     messages: Mapped[str] = mapped_column(Text, default="[]")
@@ -37,6 +37,42 @@ class SubagentTaskORM(Base):
     result: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LongTermMemoryORM(Base):
+    """长期记忆表 - 全局记忆存储"""
+    __tablename__ = "long_term_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), default="")
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    keywords: Mapped[str] = mapped_column(Text, default="")  # JSON 格式存储关键词列表
+    compressed_content: Mapped[str] = mapped_column(Text, default="")  # 压缩后的核心内容
+    project_path: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ShortTermMemoryORM(Base):
+    """短期记忆表 - 会话级别存储"""
+    __tablename__ = "short_term_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    is_compressed: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ProjectMemoryORM(Base):
+    """项目记忆表 - 项目级别存储"""
+    __tablename__ = "project_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_path: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    initialized_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    config: Mapped[str] = mapped_column(Text, default="")  # JSON 格式存储项目配置
+    context_summary: Mapped[str] = mapped_column(Text, default="")  # 项目上下文摘要
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 _engine = None

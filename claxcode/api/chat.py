@@ -26,7 +26,7 @@ async def chat(
     result = await db.execute(select(SessionORM).where(SessionORM.id == str(session_id)))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话不存在")
 
     agent = Agent(
         session_id=session_id,

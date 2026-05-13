@@ -6,7 +6,6 @@ Requires: pip install playwright && playwright install chromium
 from __future__ import annotations
 
 import base64
-from pathlib import Path
 from typing import Any
 
 from claxcode.tools.base import Tool
@@ -14,7 +13,7 @@ from claxcode.tools.registry import tool
 
 # Lazy import — fail at runtime only if not installed
 try:
-    from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+    from playwright.async_api import async_playwright, Browser, Page
 except ImportError:
     async_playwright = None  # type: ignore[assignment]
 
@@ -32,7 +31,7 @@ async def _get_browser(headless: bool = True, proxy: str | None = None) -> Brows
 
     if async_playwright is None:
         raise RuntimeError(
-            "Playwright is not installed. Run: pip install playwright && playwright install chromium"
+            "Playwright 未安装。请运行: pip install playwright && playwright install chromium"
         )
 
     p = await async_playwright().start()
@@ -50,15 +49,27 @@ _page_context: dict[str, Any] = {}
 
 async def _ensure_page(browser: Browser | None = None) -> Page:
     """Return an existing page or create a new one."""
-    global _page_context
     if browser is None:
         browser = await _get_browser()
+
+    # 检查是否有已存在的页面且未关闭
+    if "page" in _page_context:
+        page = _page_context["page"]
+        if page and not page.is_closed():
+            return page
+
+    # 获取浏览器上下文中的页面
     pages = browser.contexts[0].pages if browser.contexts else []
     if pages:
-        _page_context["page"] = pages[-1]
-    if "page" not in _page_context or not _page_context["page"].is_closed():
-        ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-        _page_context["page"] = await ctx.new_page()
+        # 使用最后一个活动的页面
+        for p in reversed(pages):
+            if not p.is_closed():
+                _page_context["page"] = p
+                return p
+
+    # 创建新页面
+    ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+    _page_context["page"] = await ctx.new_page()
     return _page_context["page"]
 
 
@@ -67,10 +78,10 @@ async def _ensure_page(browser: Browser | None = None) -> Page:
 
 @tool
 class BrowserNavigate(Tool):
-    """Navigate to a URL."""
+    """导航到指定 URL。"""
 
     name = "browser_navigate"
-    description = "Open a URL in the browser."
+    description = "在浏览器中打开 URL。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -100,20 +111,20 @@ class BrowserNavigate(Tool):
         try:
             await page.goto(url, wait_until=wait_until)
             return (
-                f"✅ Navigated to {url}\n"
-                f"   Title: {await page.title()}\n"
+                f"✅ 已导航到 {url}\n"
+                f"   标题: {await page.title()}\n"
                 f"   URL: {page.url}"
             )
         except Exception as exc:
-            return f"❌ Navigation failed: {exc}"
+            return f"❌ 导航失败: {exc}"
 
 
 @tool
 class BrowserClick(Tool):
-    """Click an element on the page."""
+    """点击页面上的元素。"""
 
     name = "browser_click"
-    description = "Click an element identified by a CSS selector."
+    description = "点击由 CSS 选择器标识的元素。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -129,17 +140,17 @@ class BrowserClick(Tool):
         page = await _ensure_page()
         try:
             await page.click(selector, timeout=timeout)
-            return f"🖱️ Clicked element '{selector}'"
+            return f"🖱️ 已点击元素 '{selector}'"
         except Exception as exc:
-            return f"❌ Click failed: {exc}"
+            return f"❌ 点击失败: {exc}"
 
 
 @tool
 class BrowserType(Tool):
-    """Type text into an input field."""
+    """在输入框中输入文本。"""
 
     name = "browser_type"
-    description = "Type text into an input field."
+    description = "在输入字段中输入文本。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -166,23 +177,31 @@ class BrowserType(Tool):
             if clear_first:
                 await page.fill(selector, "")
             await page.type(selector, text, delay=delay)
-            return f"⌨️ Typed '{text}' into '{selector}'"
+            return f"⌨️ 已在 '{selector}' 中输入 '{text}'"
         except Exception as exc:
-            return f"❌ Type failed: {exc}"
+            return f"❌ 输入失败: {exc}"
 
 
 @tool
 class BrowserScreenshot(Tool):
-    """Take a screenshot of the current page."""
+    """截取当前页面的屏幕截图。"""
 
     name = "browser_screenshot"
-    description = "Take a screenshot and save it to a file, or return base64 data."
+    description = "截取屏幕截图并保存到文件，或返回 base64 数据。"
     input_schema = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path to save the screenshot (e.g. screenshot.png)", "default": ""},
+            "path": {
+                    "type": "string",
+                    "description": "File path to save the screenshot (e.g. screenshot.png)",
+                    "default": "",
+                },
             "full_page": {"type": "boolean", "default": False, "description": "Capture full-page screenshot"},
-            "return_base64": {"type": "boolean", "default": False, "description": "Return base64-encoded PNG data instead of saving"},
+            "return_base64": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Return base64-encoded PNG data instead of saving",
+                },
         },
         "required": [],
     }
@@ -201,21 +220,21 @@ class BrowserScreenshot(Tool):
             if return_base64:
                 screenshot_bytes = await page.screenshot(full_page=full_page, type="png")
                 b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-                return f"📸 Screenshot (base64, {len(screenshot_bytes)} bytes):\n{b64}"
+                return f"📸 截图 (base64, {len(screenshot_bytes)} 字节):\n{b64}"
             if not path:
                 path = f"screenshot_{int(__import__('time').time())}.png"
             await page.screenshot(path=path, full_page=full_page)
-            return f"📸 Screenshot saved: {path}"
+            return f"📸 截图已保存: {path}"
         except Exception as exc:
-            return f"❌ Screenshot failed: {exc}"
+            return f"❌ 截图失败: {exc}"
 
 
 @tool
 class BrowserGetContent(Tool):
-    """Get text content of the page or a specific element."""
+    """获取页面或特定元素的文本内容。"""
 
     name = "browser_get_content"
-    description = "Get visible text content of the page or a CSS-selected element."
+    description = "获取页面或 CSS 选择元素的可见文本内容。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -237,7 +256,7 @@ class BrowserGetContent(Tool):
             if selector:
                 el = await page.query_selector(selector)
                 if el is None:
-                    return f"❌ Element '{selector}' not found"
+                    return f"❌ 未找到元素 '{selector}'"
                 text = await el.inner_text()
             else:
                 text = await page.content()
@@ -247,18 +266,18 @@ class BrowserGetContent(Tool):
                 text = re.sub(r"<[^>]+>", "", text)
                 text = re.sub(r"\s+", " ", text).strip()
             if len(text) > max_length:
-                text = text[:max_length] + "\n... [truncated]"
+                text = text[:max_length] + "\n... [已截断]"
             return text
         except Exception as exc:
-            return f"❌ Failed to get content: {exc}"
+            return f"❌ 获取内容失败: {exc}"
 
 
 @tool
 class BrowserEvaluate(Tool):
-    """Execute JavaScript in the browser page."""
+    """在浏览器页面中执行 JavaScript。"""
 
     name = "browser_evaluate"
-    description = "Run JavaScript code in the browser page and return the result."
+    description = "在浏览器页面中运行 JavaScript 代码并返回结果。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -273,21 +292,25 @@ class BrowserEvaluate(Tool):
         page = await _ensure_page()
         try:
             result = await page.evaluate(script)
-            return f"📜 JS result:\n{result}"
+            return f"📜 JS 执行结果:\n{result}"
         except Exception as exc:
-            return f"❌ JS evaluation failed: {exc}"
+            return f"❌ JS 执行失败: {exc}"
 
 
 @tool
 class BrowserWait(Tool):
-    """Wait for a condition on the page."""
+    """等待页面上的某个条件。"""
 
     name = "browser_wait"
-    description = "Wait for a time period, a selector to appear, or the page to load."
+    description = "等待一段时间、等待选择器出现或等待页面加载。"
     input_schema = {
         "type": "object",
         "properties": {
-            "timeout": {"type": "integer", "default": 2000, "description": "Time to wait in ms (used when no selector given)"},
+            "timeout": {
+                    "type": "integer",
+                    "default": 2000,
+                    "description": "Time to wait in ms (used when no selector given)",
+                },
         },
         "required": [],
     }
@@ -298,17 +321,17 @@ class BrowserWait(Tool):
         page = await _ensure_page()
         try:
             await page.wait_for_timeout(timeout)
-            return f"⏳ Waited {timeout}ms"
+            return f"⏳ 已等待 {timeout}毫秒"
         except Exception as exc:
-            return f"❌ Wait failed: {exc}"
+            return f"❌ 等待失败: {exc}"
 
 
 @tool
 class BrowserClose(Tool):
-    """Close the current page or the entire browser."""
+    """关闭当前页面或整个浏览器。"""
 
     name = "browser_close"
-    description = "Close the current page ('page') or the entire browser ('all')."
+    description = "关闭当前页面 ('page') 或整个浏览器 ('all')。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -325,29 +348,29 @@ class BrowserClose(Tool):
     required_permissions = ["web"]
 
     async def execute(self, target: str = "page", **kwargs: Any) -> str:
-        global _browser, _page_context
+        global _browser
         try:
             if target == "all":
                 if _browser:
                     await _browser.close()
                     _browser = None
                 _page_context.pop("page", None)
-                return "🛑 Browser closed"
+                return "🛑 浏览器已关闭"
             # Close current page
             page = _page_context.pop("page", None)
             if page and not page.is_closed():
                 await page.close()
-            return "📄 Page closed"
+            return "📄 页面已关闭"
         except Exception as exc:
-            return f"❌ Close failed: {exc}"
+            return f"❌ 关闭失败: {exc}"
 
 
 @tool
 class BrowserListPages(Tool):
-    """List all open pages/tabs."""
+    """列出所有打开的页面/标签。"""
 
     name = "browser_list_pages"
-    description = "List all open pages/tabs in the browser."
+    description = "列出浏览器中所有打开的页面/标签。"
     input_schema = {
         "type": "object",
         "properties": {},
@@ -357,13 +380,12 @@ class BrowserListPages(Tool):
     required_permissions = ["web"]
 
     async def execute(self, **kwargs: Any) -> str:
-        global _browser
         if _browser is None or not _browser.is_connected():
-            return "ℹ️ No browser is open"
+            return "ℹ️ 浏览器未打开"
         pages = []
         for ctx in _browser.contexts:
             for pg in ctx.pages:
-                pages.append(f"  • {pg.url}  (title: {await pg.title()})")
+                pages.append(f"  • {pg.url}  (标题: {await pg.title()})")
         if not pages:
-            return "ℹ️ No open pages"
-        return "📑 Open pages:\n" + "\n".join(pages)
+            return "ℹ️ 没有打开的页面"
+        return "📑 打开的页面:\n" + "\n".join(pages)

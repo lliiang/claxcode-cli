@@ -24,7 +24,7 @@ def _spawn_subagent(session_id: UUID, agent_type: str, instruction: str):
         return PlannerSubagent(session_id, instruction)
     if agent_type == "executor":
         return ExecutorSubagent(session_id, instruction)
-    raise ValueError(f"Unknown agent type: {agent_type}")
+    raise ValueError(f"未知的代理类型: {agent_type}")
 
 
 @router.post("", response_model=SubagentTask)
@@ -62,7 +62,7 @@ async def spawn_subagent(
 async def get_subagent(task_id: UUID):
     task = _subagent_tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Subagent task not found")
+        raise HTTPException(status_code=404, detail="子代理任务不存在")
     return task
 
 
@@ -70,7 +70,7 @@ async def get_subagent(task_id: UUID):
 async def stream_subagent(task_id: UUID):
     task = _subagent_tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Subagent task not found")
+        raise HTTPException(status_code=404, detail="子代理任务不存在")
 
     async def event_stream():
         agent = _spawn_subagent(task.session_id, task.agent_type, task.instruction)

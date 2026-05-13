@@ -28,7 +28,7 @@ async def invoke_tool(request: ToolInvokeRequest):
     if tool is None:
         return ToolInvokeResponse(
             name=request.name,
-            output=f"Tool '{request.name}' not found",
+            output=f"工具 '{request.name}' 不存在",
             error=True,
         )
     try:

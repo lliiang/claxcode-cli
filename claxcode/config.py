@@ -1,6 +1,7 @@
 """Global configuration for ClaxCode."""
 
 from pathlib import Path
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "ClaxCode"
-    debug: bool = False
+    debug: bool = Field(default=False, validation_alias="CLAXCODE_DEBUG")
 
     # LLM
     llm_provider: str = "openai"  # openai | anthropic | generic_openai
@@ -35,6 +36,9 @@ class Settings(BaseSettings):
     # Server
     host: str = "127.0.0.1"
     port: int = 8000
+
+    # Tool Execution
+    tool_timeout: int = 60  # seconds
 
     model_config = SettingsConfigDict(
         env_file=".env",

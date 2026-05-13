@@ -11,7 +11,7 @@ from claxcode.tools.registry import tool
 @tool
 class FetchURL(Tool):
     name = "fetch_url"
-    description = "Fetch the text content of a URL."
+    description = "获取 URL 的文本内容。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -30,18 +30,18 @@ class FetchURL(Tool):
                 resp.raise_for_status()
                 text = resp.text
                 if len(text) > max_length:
-                    text = text[:max_length] + "\n... [truncated]"
+                    text = text[:max_length] + "\n... [已截断]"
                 return text
         except httpx.HTTPStatusError as exc:
-            return f"HTTP error {exc.response.status_code} for {url}"
+            return f"HTTP 错误 {exc.response.status_code}: {url}"
         except Exception as exc:
-            return f"Error fetching {url}: {exc}"
+            return f"获取 {url} 时出错: {exc}"
 
 
 @tool
 class WebSearch(Tool):
     name = "web_search"
-    description = "Search the web using DuckDuckGo (HTML scrape)."
+    description = "使用 DuckDuckGo 搜索网页（HTML 抓取）。"
     input_schema = {
         "type": "object",
         "properties": {
@@ -70,7 +70,7 @@ class WebSearch(Tool):
                     if len(results) >= max_results:
                         break
                 if not results:
-                    return "No search results found."
+                    return "未找到搜索结果。"
                 return "\n\n".join(results)
         except Exception as exc:
-            return f"Search error: {exc}"
+            return f"搜索错误: {exc}"

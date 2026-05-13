@@ -51,7 +51,7 @@ async def get_session(session_id: UUID, db: AsyncSession = Depends(get_db_sessio
     result = await db.execute(select(SessionORM).where(SessionORM.id == str(session_id)))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话不存在")
     return _orm_to_model(row)
 
 
@@ -60,7 +60,7 @@ async def delete_session(session_id: UUID, db: AsyncSession = Depends(get_db_ses
     result = await db.execute(select(SessionORM).where(SessionORM.id == str(session_id)))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话不存在")
     await db.delete(row)
     await db.commit()
     return None

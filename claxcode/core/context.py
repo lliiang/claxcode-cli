@@ -54,7 +54,7 @@ class ContextManager:
     def _maybe_compress(self) -> None:
         threshold = int(settings.max_context_tokens * settings.context_compression_threshold)
         while self._total_tokens() > threshold and len(self.messages) > 3:
-            removed = self.messages.pop(1)  # keep system at index 0
+            self.messages.pop(1)  # keep system at index 0
 
     def clear(self) -> None:
         self.messages = []

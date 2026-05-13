@@ -14,10 +14,10 @@ from claxcode.memory.project_context import load_project_context
 from claxcode.tools.registry import registry
 
 
-DEFAULT_SYSTEM_PROMPT = """You are ClaxCode, an agentic coding assistant.
-You help users write, edit, debug, and understand code.
-When you need to interact with the project, use the provided tools.
-Always think step by step and explain your reasoning."""
+DEFAULT_SYSTEM_PROMPT = """你是 ClaxCode，一个智能编程助手。
+你帮助用户编写、编辑、调试和理解代码。
+当你需要与项目交互时，请使用提供的工具。
+始终逐步思考并解释你的推理过程。"""
 
 
 class Agent:
@@ -66,7 +66,7 @@ class Agent:
 
     async def run(self, user_message: str) -> AsyncIterator[dict]:
         """Stream agent events."""
-        yield {"type": "thinking", "content": "Gathering context..."}
+        yield {"type": "thinking", "content": "正在收集上下文..."}
         self.context.add_message("user", user_message)
 
         for iteration in range(self.max_iterations):
@@ -83,7 +83,7 @@ class Agent:
                 for t in registry.list_tools()
             ]
 
-            yield {"type": "thinking", "content": f"Thinking... (step {iteration + 1})"}
+            yield {"type": "thinking", "content": f"思考中... (步骤 {iteration + 1})"}
 
             messages = self.context.get_messages()
 
@@ -91,7 +91,7 @@ class Agent:
             if self.debug:
                 yield {
                     "type": "debug",
-                    "label": "Raw context sent to LLM",
+                    "label": "发送给 LLM 的原始上下文",
                     "payload": {
                         "messages": messages,
                         "tools_count": len(available_tools),
@@ -123,7 +123,7 @@ class Agent:
                 if self.debug:
                     yield {
                         "type": "debug",
-                        "label": "Assistant response (no tools)",
+                        "label": "助手响应（无工具调用）",
                         "payload": {"content": content_buffer},
                     }
                 yield {"type": "done"}
@@ -147,7 +147,7 @@ class Agent:
             if self.debug:
                 yield {
                     "type": "debug",
-                    "label": "Tool calls from LLM",
+                    "label": "来自 LLM 的工具调用",
                     "payload": {"tool_calls": pending_tool_calls},
                 }
 
@@ -163,24 +163,24 @@ class Agent:
                 if self.debug:
                     yield {
                         "type": "debug",
-                        "label": f"Tool result: {name}",
+                        "label": f"工具结果: {name}",
                         "payload": {"arguments": args, "result": result},
                     }
 
             # VERIFY: lightweight step (just a thinking marker)
-            yield {"type": "thinking", "content": "Verifying results..."}
+            yield {"type": "thinking", "content": "正在验证结果..."}
 
-        yield {"type": "done", "warning": "Max iterations reached"}
+        yield {"type": "done", "warning": "已达到最大迭代次数"}
 
     async def _execute_tool(self, name: str, args: dict) -> str:
         tool = registry.get(name)
         if tool is None:
-            return f"Error: Tool '{name}' not found"
+            return f"错误：工具 '{name}' 不存在"
 
         # Permission check
         if self.permission_mode == "plan":
             if "write" in tool.required_permissions or "execute" in tool.required_permissions:
-                return f"[Blocked in plan mode] Tool '{name}' requires write/execute permission."
+                return f"[在计划模式下被阻止] 工具 '{name}' 需要写入/执行权限。"
         # YOLO mode: execute everything without confirmation
         # (snapshot is still created for rollback safety)
 
@@ -191,4 +191,4 @@ class Agent:
         try:
             return await tool.execute(**args)
         except Exception as exc:
-            return f"Error executing {name}: {exc}"
+            return f"执行 {name} 时出错: {exc}"

@@ -44,7 +44,7 @@ class DummyProvider(LLMProvider):
         if self.reason:
             yield f"[DummyProvider] {self.reason}"
         else:
-            yield "[DummyProvider] No LLM configured. Please set LLM_PROVIDER and LLM_API_KEY."
+            yield "[DummyProvider] 未配置 LLM。请设置 LLM_PROVIDER 和 LLM_API_KEY。"
 
 
 class OpenAIProvider(LLMProvider):
@@ -139,7 +139,7 @@ class AnthropicProvider(LLMProvider):
             from anthropic import AsyncAnthropic
         except ImportError as exc:
             raise ImportError(
-                "anthropic package is required for AnthropicProvider. Install with: pip install anthropic"
+                "AnthropicProvider 需要 anthropic 包。请安装: pip install anthropic"
             ) from exc
 
         self.client = AsyncAnthropic(api_key=settings.llm_api_key or "sk-test")
@@ -426,8 +426,8 @@ def get_provider() -> LLMProvider:
             return AnthropicProvider()
         except ImportError as exc:
             return DummyProvider(
-                reason=f"Failed to load provider '{provider}'. {exc}. "
-                "Install the required package or choose a different LLM_PROVIDER."
+                reason=f"加载提供商 '{provider}' 失败。{exc}. "
+                "请安装所需的包或选择其他 LLM_PROVIDER。"
             )
     if provider == "generic_openai":
         return GenericOpenAIProvider()
@@ -436,6 +436,6 @@ def get_provider() -> LLMProvider:
     if provider == "custom_http":
         return CustomHTTPProvider()
     return DummyProvider(
-        reason=f"Unknown provider '{provider}'. "
-        "Supported: openai, anthropic, generic_openai, ollama, custom_http."
+        reason=f"未知的提供商 '{provider}'. "
+        "支持的提供商: openai, anthropic, generic_openai, ollama, custom_http。"
     )
