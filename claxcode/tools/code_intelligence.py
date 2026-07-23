@@ -1,7 +1,6 @@
 """Code intelligence tools (stubs for Phase 2)."""
 
 import re
-from pathlib import Path
 from typing import Any
 
 from claxcode.tools.base import Tool

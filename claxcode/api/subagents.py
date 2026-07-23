@@ -7,14 +7,17 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from claxcode.models.subagent import SubagentTask, SubagentStatus
+from claxcode.memory.session_store import (
+    create_subagent_task,
+    finish_subagent_task,
+    get_subagent_task,
+)
+from claxcode.models.subagent import SubagentStatus, SubagentTask
+from claxcode.subagents.executor import ExecutorSubagent
 from claxcode.subagents.explore import ExploreSubagent
 from claxcode.subagents.planner import PlannerSubagent
-from claxcode.subagents.executor import ExecutorSubagent
 
 router = APIRouter()
-
-_subagent_tasks: dict[UUID, SubagentTask] = {}
 
 
 def _spawn_subagent(session_id: UUID, agent_type: str, instruction: str):
@@ -39,20 +42,18 @@ async def spawn_subagent(
         instruction=instruction,
         status=SubagentStatus.RUNNING,
     )
-    _subagent_tasks[task.id] = task
+    await create_subagent_task(task)
 
     async def run_task():
+        results = []
         try:
             agent = _spawn_subagent(session_id, agent_type, instruction)
-            results = []
             async for event in agent.run():
                 if event.get("type") == "result":
                     results.append(event.get("content", ""))
-            task.result = "\n".join(results)
-            task.status = SubagentStatus.COMPLETED
+            await finish_subagent_task(task.id, SubagentStatus.COMPLETED, "\n".join(results))
         except Exception as exc:
-            task.result = str(exc)
-            task.status = SubagentStatus.FAILED
+            await finish_subagent_task(task.id, SubagentStatus.FAILED, str(exc))
 
     asyncio.create_task(run_task())
     return task
@@ -60,7 +61,7 @@ async def spawn_subagent(
 
 @router.get("/{task_id}", response_model=SubagentTask)
 async def get_subagent(task_id: UUID):
-    task = _subagent_tasks.get(task_id)
+    task = await get_subagent_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="子代理任务不存在")
     return task
@@ -68,7 +69,7 @@ async def get_subagent(task_id: UUID):
 
 @router.post("/{task_id}/stream")
 async def stream_subagent(task_id: UUID):
-    task = _subagent_tasks.get(task_id)
+    task = await get_subagent_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="子代理任务不存在")
 

@@ -1,6 +1,5 @@
 """SSH tools for remote server management using paramiko."""
 
-import asyncio
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -9,7 +8,6 @@ import paramiko
 
 from claxcode.tools.base import Tool
 from claxcode.tools.registry import tool
-
 
 # 危险命令列表
 DANGEROUS_COMMANDS = [
@@ -21,11 +19,11 @@ DANGEROUS_COMMANDS = [
     ":(){ :|:& };:",  # fork bomb
     "> /dev/sda",
     "mv / /dev/null",
-    
+
     # 权限提升相关
     "chmod -R 777 /",
     "chmod 777 /",
-    
+
     # 网络相关危险操作
     "iptables -F",
     "iptables --flush",
@@ -42,12 +40,12 @@ def is_dangerous_command(command: str) -> tuple[bool, str]:
         (是否危险, 原因)
     """
     command_lower = command.lower().strip()
-    
+
     # 检查危险命令
     for dangerous in DANGEROUS_COMMANDS:
         if dangerous.lower() in command_lower:
             return True, f"命令包含危险操作: {dangerous}"
-    
+
     # 检查删除根目录或系统目录
     dangerous_patterns = [
         (r'rm\s+-rf?\s+/\s', "删除根目录"),
@@ -59,12 +57,12 @@ def is_dangerous_command(command: str) -> tuple[bool, str]:
         (r'rm\s+-rf?\s+/lib', "删除库目录"),
         (r'rm\s+-rf?\s+/lib64', "删除库目录"),
     ]
-    
+
     import re
     for pattern, reason in dangerous_patterns:
         if re.search(pattern, command_lower):
             return True, f"命令包含危险操作: {reason}"
-    
+
     return False, ""
 
 

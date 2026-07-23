@@ -1,0 +1,31 @@
+# Secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# ClaxCode runtime state (DB, snapshots, audit log)
+.claxcode/
+
+# Backups and stray logs
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db

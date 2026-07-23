@@ -2,7 +2,7 @@
 
 import pytest
 
-from claxcode.tools.search import GlobSearch, GrepSearch, ExploreCodebase
+from claxcode.tools.search import ExploreCodebase, GlobSearch, GrepSearch
 
 
 @pytest.mark.asyncio

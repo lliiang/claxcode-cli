@@ -1,6 +1,5 @@
 """Tool registry with decorator-based registration."""
 
-from typing import Any
 
 from claxcode.tools.base import Tool
 
@@ -21,8 +20,9 @@ class ToolRegistry:
     def list_tools(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def list_by_category(self, category: str) -> list[Tool]:
-        return [t for t in self._tools.values() if t.category == category]
+    def unregister(self, name: str) -> bool:
+        """Remove a tool from the registry. Returns True if removed."""
+        return self._tools.pop(name, None) is not None
 
 
 registry = ToolRegistry()

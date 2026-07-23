@@ -1,11 +1,11 @@
 """长期记忆管理器 - 全局记忆存储."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from claxcode.memory.session_store import LongTermMemoryORM, get_db_session
@@ -38,7 +38,7 @@ class LongTermMemory:
             memory = LongTermMemoryORM(
                 id=memory_id,
                 session_id=session_id,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 keywords=json.dumps(keywords, ensure_ascii=False),
                 compressed_content=compressed_content,
                 project_path=project_path,
@@ -70,32 +70,27 @@ class LongTermMemory:
             if project_path:
                 query = query.where(LongTermMemoryORM.project_path == project_path)
 
+            if keywords:
+                conditions = []
+                for kw in keywords:
+                    conditions.append(LongTermMemoryORM.compressed_content.contains(kw))
+                    conditions.append(LongTermMemoryORM.keywords.contains(kw))
+                if conditions:
+                    query = query.where(or_(*conditions))
+
             result = await db.execute(query.limit(limit))
             memories = result.scalars().all()
 
-            filtered_memories = []
-            for m in memories:
-                memory_keywords = json.loads(m.keywords) if m.keywords else []
-                # 如果提供了关键词，进行匹配
-                if keywords:
-                    if any(kw in memory_keywords or kw in m.compressed_content for kw in keywords):
-                        filtered_memories.append({
-                            "id": m.id,
-                            "timestamp": m.timestamp.isoformat(),
-                            "keywords": memory_keywords,
-                            "compressed_content": m.compressed_content,
-                            "project_path": m.project_path,
-                        })
-                else:
-                    filtered_memories.append({
-                        "id": m.id,
-                        "timestamp": m.timestamp.isoformat(),
-                        "keywords": memory_keywords,
-                        "compressed_content": m.compressed_content,
-                        "project_path": m.project_path,
-                    })
-
-            return filtered_memories
+            return [
+                {
+                    "id": m.id,
+                    "timestamp": m.timestamp.isoformat(),
+                    "keywords": json.loads(m.keywords) if m.keywords else [],
+                    "compressed_content": m.compressed_content,
+                    "project_path": m.project_path,
+                }
+                for m in memories
+            ]
 
     async def list_all(self, limit: int = 50) -> list[dict[str, Any]]:
         """列出所有长期记忆.
@@ -156,7 +151,7 @@ class LongTermMemory:
 
         memories = await self.search(project_path=project_path, limit=1000)
         export_data = {
-            "export_time": datetime.now(timezone.utc).isoformat(),
+            "export_time": datetime.now(UTC).isoformat(),
             "memories": memories,
         }
 

@@ -1,7 +1,6 @@
 """Execution tools."""
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 from claxcode.tools.base import Tool
@@ -15,17 +14,6 @@ def set_tool_cancelled() -> None:
     """Set the tool cancellation flag."""
     global _tool_cancelled
     _tool_cancelled = True
-
-
-def is_tool_cancelled() -> bool:
-    """Check if tool execution has been cancelled."""
-    return _tool_cancelled
-
-
-def reset_tool_cancelled() -> None:
-    """Reset the tool cancellation flag."""
-    global _tool_cancelled
-    _tool_cancelled = False
 
 
 @tool
@@ -59,7 +47,7 @@ class RunShell(Tool):
             if proc.returncode != 0:
                 output += f"\n[exit code: {proc.returncode}]"
             return output
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"Error: Command timed out after {timeout}s"
         except Exception as exc:

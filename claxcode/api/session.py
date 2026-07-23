@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from claxcode.memory.session_store import get_db_session, SessionORM
+from claxcode.memory.session_store import SessionORM, get_db_session
 from claxcode.models.session import Session, SessionCreate
 
 router = APIRouter()

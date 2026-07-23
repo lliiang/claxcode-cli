@@ -1,7 +1,7 @@
 """项目记忆管理器 - 项目级别存储."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -43,7 +43,7 @@ class ProjectMemory:
             if existing:
                 # 更新现有配置
                 existing.config = json.dumps(config, ensure_ascii=False)
-                existing.updated_at = datetime.now(timezone.utc)
+                existing.updated_at = datetime.now(UTC)
                 await db.commit()
                 return existing.id
             else:
@@ -52,10 +52,10 @@ class ProjectMemory:
                 memory = ProjectMemoryORM(
                     id=memory_id,
                     project_path=project_path,
-                    initialized_at=datetime.now(timezone.utc),
+                    initialized_at=datetime.now(UTC),
                     config=json.dumps(config, ensure_ascii=False),
                     context_summary="",
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                 )
                 db.add(memory)
                 await db.commit()
@@ -111,7 +111,7 @@ class ProjectMemory:
 
             if memory:
                 memory.context_summary = summary
-                memory.updated_at = datetime.now(timezone.utc)
+                memory.updated_at = datetime.now(UTC)
                 await db.commit()
                 return True
             return False

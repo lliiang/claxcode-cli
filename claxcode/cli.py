@@ -4,8 +4,14 @@
 import argparse
 import asyncio
 import json
+import sys
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
 
@@ -15,8 +21,11 @@ for _env_path in [Path(".env").resolve(), Path.home() / ".claxcode" / ".env"]:
         load_dotenv(_env_path, override=True)
         break
 
+# Ensure all built-in tools are registered
+import claxcode.tools  # noqa: F401
 from claxcode.config import settings
 from claxcode.core.agent import Agent
+from claxcode.core.checkpoint import CheckpointManager
 from claxcode.core.models import get_provider
 from claxcode.extensions.skills import SkillManager
 from claxcode.memory import (
@@ -24,8 +33,20 @@ from claxcode.memory import (
     long_term_memory,
     project_memory,
 )
+from claxcode.memory.auto_memory import auto_memory
 from claxcode.memory.project_context import load_project_context
+from claxcode.memory.session_store import get_session_messages, save_session_messages
+from claxcode.security.audit import audit_logger
 from claxcode.tools.registry import registry
+
+
+@dataclass
+class SlashCommand:
+    """A built-in CLI command."""
+
+    usage: str
+    description: str
+    handler: Callable[[list[str]], Awaitable[bool]]  # returns True to exit the REPL
 
 
 class InteractiveCLI:
@@ -35,21 +56,15 @@ class InteractiveCLI:
         self.session_id = uuid4()
         self.project_path = Path(project_path).resolve()
         self.permission_mode = permission_mode
+        self._auto_approved: set[str] = set()
         self.agent: Agent | None = None
         self.skill_manager = SkillManager()
         self._load_skills()
+        self._command_table = self._build_commands()
 
     def _load_skills(self) -> None:
-        """Load global and project-level skills."""
-        global_skills = Path.home() / ".claxcode" / "skills"
-        if global_skills.exists():
-            self.skill_manager.load_skill_dir(global_skills)
-        project_skills = self.project_path / ".claxcode" / "skills"
-        if project_skills.exists():
-            self.skill_manager.load_skill_dir(project_skills)
-        project_skills2 = self.project_path / "skills"
-        if project_skills2.exists():
-            self.skill_manager.load_skill_dir(project_skills2)
+        """Load built-in, user-global and project skills."""
+        self.skill_manager.load_defaults(self.project_path)
 
     async def run(self) -> None:
         # 初始化数据库
@@ -70,10 +85,15 @@ class InteractiveCLI:
             session_id=self.session_id,
             project_path=str(self.project_path),
             permission_mode=self.permission_mode,
+            approval_callback=self._approve_tool,
         )
         skills_prompt = self.skill_manager.to_prompt_fragment()
         if skills_prompt:
             self.agent.context.add_message("system", f"\n\n{skills_prompt}")
+
+        restored = await self._resume_session()
+        if restored:
+            print(f"💾 已恢复上次会话（{restored} 条消息），输入 /clear 可重新开始。\n")
 
         while True:
             try:
@@ -90,12 +110,57 @@ class InteractiveCLI:
                 should_exit = await self._handle_command(user_input)
                 if should_exit:
                     break
+            elif user_input.startswith("!"):
+                await self._run_shell_inline(user_input[1:].strip())
+            elif user_input.startswith("#"):
+                self._quick_memory(user_input[1:].strip())
             else:
-                await self._chat(user_input)
+                await self._chat(self._expand_mentions(user_input))
 
-    async def _read_input(self) -> str:
+    async def _read_input(self, prompt: str = "❯ ") -> str:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: input("❯ "))
+        return await loop.run_in_executor(None, lambda: input(prompt))
+
+    async def _approve_tool(self, tool_name: str, args: dict[str, Any]) -> bool:
+        """Prompt the user to approve a tool call in ask mode."""
+        if tool_name in self._auto_approved:
+            return True
+        args_preview = json.dumps(args, ensure_ascii=False)[:200]
+        print(f"\n🔐 权限请求: {tool_name}({args_preview})")
+        try:
+            answer = (await self._read_input("   允许? [y]es / [a]lways / [N]o: ")).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if answer == "a":
+            self._auto_approved.add(tool_name)
+            return True
+        return answer in ("y", "yes")
+
+    async def _resume_session(self) -> int:
+        """Resume the previous CLI session for this project. Returns messages restored."""
+        state_file = self.project_path / ".claxcode" / "cli_session"
+        if state_file.exists():
+            with suppress(ValueError):  # 损坏的状态文件：沿用新会话 ID
+                self.session_id = UUID(state_file.read_text(encoding="utf-8").strip())
+        else:
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            state_file.write_text(str(self.session_id), encoding="utf-8")
+
+        if self.agent is None:
+            return 0
+        self.agent.session_id = self.session_id
+        saved = await get_session_messages(self.session_id)
+        if saved:
+            self.agent.context.restore(saved)
+        return len(saved)
+
+    async def _persist_session(self) -> None:
+        """Persist the conversation (minus the system prompt) for later resume."""
+        if self.agent is None:
+            return
+        with suppress(Exception):  # 持久化失败不应影响交互
+            await save_session_messages(self.session_id, self.agent.context.messages[1:])
 
     async def _chat(self, message: str) -> None:
         if self.agent is None:
@@ -128,63 +193,294 @@ class InteractiveCLI:
             # 给工具一些时间来响应取消
             await asyncio.sleep(0.5)
             print("📝 当前操作已中止。您可以继续输入新的指令。\n")
+        finally:
+            await self._persist_session()
 
     async def _handle_command(self, command: str) -> bool:
         parts = command.split()
-        cmd = parts[0].lower()
-        args = parts[1:]
+        cmd, args = parts[0].lower(), parts[1:]
 
-        if cmd in ("/exit", "/quit"):
-            print("👋 再见！")
-            return True
+        entry = self._command_table.get(cmd)
+        if entry is not None:
+            return await entry.handler(args)
 
-        if cmd == "/help":
-            self._print_help()
-        elif cmd == "/tools":
-            self._print_tools()
-        elif cmd == "/mode":
-            self._set_mode(args)
-        elif cmd == "/skills":
-            self._print_skills()
-        elif cmd == "/debug":
-            self._toggle_debug()
-        elif cmd == "/config":
-            self._print_config()
-        elif cmd == "/clear":
-            if self.agent:
-                self.agent.context.clear()
-            print("🧹 上下文已清除。\n")
-        elif cmd == "/project":
-            await self._handle_project_command(args)
-        elif cmd == "/memory":
-            await self._handle_memory_command(args)
-        elif cmd == "/init":
-            await self._handle_init_command()
-        elif cmd == "/compact":
-            await self._handle_compact_command()
-        else:
-            print(f"❓ 未知命令: {cmd}。输入 /help 查看可用命令。\n")
+        skill_cmd = self.skill_manager.find_command(cmd.lstrip("/"))
+        if skill_cmd is not None:
+            await self._run_skill_command(skill_cmd, args)
+            return False
 
+        print(f"❓ 未知命令: {cmd}。输入 /help 查看可用命令。\n")
         return False
 
-    def _print_help(self) -> None:
-        print("""
-命令列表:
-  /help              显示帮助信息
-  /tools             列出可用工具
-  /mode <mode>       设置权限模式 (ask|auto_edit|plan|auto_safe|yolo)
-  /skills            列出已加载的技能
-  /config            显示当前 LLM 配置
-  /debug             切换调试模式（显示原始 LLM 上下文）
-  /clear             清除对话上下文
-  /project [list|switch|info]  项目管理
-  /memory [list|search|export|import|delete]  记忆管理
-  /init              初始化项目信息
-  /compact           压缩当前会话并保存到长期记忆
-  /exit, /quit       退出 ClaxCode
+    def _build_commands(self) -> dict[str, SlashCommand]:
+        """Build the slash-command dispatch table (also the source of /help)."""
+        return {
+            "/help": SlashCommand("/help", "显示帮助信息", self._cmd_help),
+            "/tools": SlashCommand("/tools", "列出可用工具", self._cmd_tools),
+            "/mode": SlashCommand(
+                "/mode <mode>", "设置权限模式 (ask|auto_edit|plan|auto_safe|yolo)", self._cmd_mode
+            ),
+            "/skills": SlashCommand("/skills [reload|create]", "技能管理", self._cmd_skills),
+            "/config": SlashCommand("/config", "显示当前 LLM 配置", self._cmd_config),
+            "/debug": SlashCommand("/debug", "切换调试模式", self._cmd_debug),
+            "/clear": SlashCommand("/clear", "清除对话上下文", self._cmd_clear),
+            "/project": SlashCommand("/project [list|switch|info]", "项目管理", self._cmd_project),
+            "/memory": SlashCommand(
+                "/memory [list|search|learn|forget|facts|...]", "记忆管理", self._cmd_memory
+            ),
+            "/init": SlashCommand("/init", "初始化项目信息", self._cmd_init),
+            "/compact": SlashCommand("/compact", "压缩会话到长期记忆", self._cmd_compact),
+            "/audit": SlashCommand("/audit [n]", "查看最近 n 条审计日志", self._cmd_audit),
+            "/rollback": SlashCommand("/rollback [n|list]", "回滚文件编辑快照", self._cmd_rollback),
+            "/exit": SlashCommand("/exit, /quit", "退出 ClaxCode", self._cmd_exit),
+            "/quit": SlashCommand("/exit, /quit", "退出 ClaxCode", self._cmd_exit),
+        }
 
-其他输入将发送给智能助手。
-""")
+    async def _run_skill_command(self, skill_cmd: dict[str, str], args: list[str]) -> None:
+        """Route a skill-defined command to the agent as an instruction."""
+        request = " ".join(args) if args else skill_cmd["description"]
+        prompt = f"使用 {skill_cmd['skill']} 技能的 {skill_cmd['name']} 命令：{request}"
+        await self._chat(prompt)
+
+    async def _run_shell_inline(self, command: str) -> None:
+        """Run a shell command directly (input prefixed with '!')."""
+        if not command:
+            return
+        tool = registry.get("run_shell")
+        if tool is None:
+            print("❌ run_shell 工具不可用。\n")
+            return
+        print(f"$ {command}")
+        result = await tool.execute(command=command, cwd=str(self.project_path))
+        print(f"{result}\n")
+
+    def _quick_memory(self, text: str) -> None:
+        """Store a quick note into auto memory (input prefixed with '#')."""
+        if not text:
+            return
+        key = f"note_{datetime.now():%Y%m%d_%H%M%S}"
+        print(f"✅ {auto_memory.remember(key, text)}（可用 /memory forget {key} 删除）\n")
+
+    def _expand_mentions(self, text: str) -> str:
+        """Inline @path file contents into the message (up to 8000 chars each)."""
+        blocks = []
+        for token in text.split():
+            if not token.startswith("@") or len(token) < 2:
+                continue
+            path = (self.project_path / token[1:]).resolve()
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            blocks.append(f"\n\n[文件 {token[1:]} 的内容]\n```\n{content[:8000]}\n```")
+        return text + "".join(blocks)
+
+    async def one_shot(self, prompt: str) -> None:
+        """Run a single prompt non-interactively (content to stdout)."""
+        await init_db()
+        self.agent = Agent(
+            session_id=self.session_id,
+            project_path=str(self.project_path),
+            permission_mode=self.permission_mode,
+        )
+        async for event in self.agent.run(self._expand_mentions(prompt)):
+            etype = event.get("type")
+            if etype == "message_delta":
+                print(event["content"], end="", flush=True)
+            elif etype in ("tool_call", "tool_result"):
+                print(f"[{etype}] {event.get('name')}", file=sys.stderr)
+        print()
+        await self._persist_session()
+
+    async def _cmd_help(self, args: list[str]) -> bool:
+        self._print_help()
+        return False
+
+    async def _cmd_tools(self, args: list[str]) -> bool:
+        self._print_tools()
+        return False
+
+    async def _cmd_mode(self, args: list[str]) -> bool:
+        self._set_mode(args)
+        return False
+
+    async def _cmd_skills(self, args: list[str]) -> bool:
+        if args and args[0] == "reload":
+            await self._reload_skills()
+        elif args and args[0] == "create":
+            await self._create_skill(args[1:])
+        else:
+            self._print_skills()
+        return False
+
+    async def _cmd_config(self, args: list[str]) -> bool:
+        self._print_config()
+        return False
+
+    async def _cmd_debug(self, args: list[str]) -> bool:
+        self._toggle_debug()
+        return False
+
+    async def _cmd_clear(self, args: list[str]) -> bool:
+        if self.agent:
+            self.agent.context.clear()
+        await self._persist_session()
+        print("🧹 上下文已清除。\n")
+        return False
+
+    async def _cmd_project(self, args: list[str]) -> bool:
+        await self._handle_project_command(args)
+        return False
+
+    async def _cmd_memory(self, args: list[str]) -> bool:
+        await self._handle_memory_command(args)
+        return False
+
+    async def _cmd_init(self, args: list[str]) -> bool:
+        await self._handle_init_command()
+        return False
+
+    async def _cmd_compact(self, args: list[str]) -> bool:
+        await self._handle_compact_command()
+        return False
+
+    async def _cmd_audit(self, args: list[str]) -> bool:
+        limit = int(args[0]) if args and args[0].isdigit() else 10
+        entries = audit_logger.read_recent(limit)
+        if not entries:
+            print("ℹ️ 暂无审计日志。\n")
+            return False
+        print(f"\n📜 最近 {len(entries)} 条审计日志:")
+        for e in entries:
+            mark = "✅" if e["allowed"] else "⛔"
+            print(f"  {mark} [{e['timestamp'][:19]}] {e['tool_name']} — {e['result_preview'][:60]}")
+        print()
+        return False
+
+    async def _cmd_rollback(self, args: list[str]) -> bool:
+        mgr = self.agent.checkpoint if self.agent else CheckpointManager()
+        if args and args[0] == "list":
+            return self._print_snapshots(mgr.list_snapshots(self.session_id))
+
+        steps = int(args[0]) if args and args[0].isdigit() else 1
+        batches = mgr.list_snapshots(self.session_id, limit=steps)
+        if not batches:
+            print("ℹ️ 没有可回滚的快照。\n")
+            return False
+        prompt = f"⚠️ 将回滚最近 {len(batches)} 个快照，确认? [y/N] "
+        try:
+            answer = (await self._read_input(prompt)).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if answer not in ("y", "yes"):
+            print("已取消。\n")
+            return False
+        restored = mgr.restore(self.session_id, steps=steps)
+        print(f"✅ 已恢复 {len(restored)} 个文件:")
+        for p in restored:
+            print(f"  • {p}")
+        print()
+        return False
+
+    def _print_snapshots(self, batches: list[dict]) -> bool:
+        if not batches:
+            print("ℹ️ 没有可用的快照。\n")
+            return False
+        print(f"\n📸 最近 {len(batches)} 个快照:")
+        for i, b in enumerate(batches, 1):
+            files = ", ".join(b["files"][:3])
+            print(f"  {i}. [{b['timestamp']}] {files}")
+        print()
+        return False
+
+    async def _cmd_exit(self, args: list[str]) -> bool:
+        print("👋 再见！")
+        return True
+
+    async def _create_skill(self, args: list[str]) -> None:
+        """创建规范格式的 Skill 目录。"""
+        if not args:
+            print("❌ 用法: /skills create <skill-name>\n")
+            return
+        name = args[0]
+        skill_dir = self.project_path / ".claxcode" / "skills" / name
+        if skill_dir.exists():
+            print(f"❌ Skill '{name}' 已存在。\n")
+            return
+        skill_dir.mkdir(parents=True, exist_ok=True)
+
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(
+            f"""# {name}
+
+## Description
+简要描述此 Skill 的功能和用途。
+
+## Instructions
+详细说明 Agent 应如何使用此 Skill。
+可以包含示例、约定、文件模式等。
+
+## Commands (可选)
+- `example_cmd`: 命令描述
+
+## Notes
+其他补充说明。
+""",
+            encoding="utf-8",
+        )
+
+        tools_py = skill_dir / "tools.py"
+        tools_py.write_text(
+            f'''"""Tools for {name} skill.
+
+在此文件中定义 Skill 专属的工具，使用 @tool 装饰器自动注册。
+"""
+
+from claxcode.tools.base import Tool
+from claxcode.tools.registry import tool
+
+
+# @tool
+# class ExampleTool(Tool):
+#     name = "example_tool"
+#     description = "An example tool."
+#     input_schema = {{
+#         "type": "object",
+#         "properties": {{"arg": {{"type": "string"}}}},
+#         "required": ["arg"],
+#     }}
+#     category = "{name}"
+#     required_permissions = []
+#
+#     async def execute(self, arg: str, **kwargs) -> str:
+#         return f"Result: {{arg}}"
+''',
+            encoding="utf-8",
+        )
+
+        print(f"✅ Skill '{name}' 已创建!")
+        print(f"   路径: {skill_dir}")
+        print("   文件: SKILL.md, tools.py")
+        print("   编辑后运行 '/skills reload' 生效。\n")
+
+    def _print_help(self) -> None:
+        print("\n命令列表:")
+        seen: set[str] = set()
+        for entry in self._command_table.values():
+            if entry.usage in seen:
+                continue
+            seen.add(entry.usage)
+            print(f"  {entry.usage:<38} {entry.description}")
+
+        skill_cmds = self.skill_manager.get_skill_commands()
+        if skill_cmds:
+            print("\n技能命令:")
+            for c in skill_cmds:
+                print(f"  /{c['name']:<37} {c['description']}  (技能: {c['skill']})")
+        print("\n其他输入将发送给智能助手。\n")
 
     def _print_tools(self) -> None:
         print("\n可用工具:")
@@ -205,6 +501,7 @@ class InteractiveCLI:
                 print("❌ 无效模式。可选: ask, auto_edit, plan, auto_safe, yolo\n")
                 return
         self.permission_mode = mode
+        self._auto_approved.clear()
         if self.agent:
             self.agent.permission_mode = mode
         print(f"✅ 模式已设置为: {mode}\n")
@@ -242,8 +539,8 @@ class InteractiveCLI:
                 # Clear to end of line and reprint
                 print(f"\r{prefix}{options[idx]}  [←↑↓→ 移动, Enter 确认, Esc 取消]", end="", flush=True)
         else:
-            import tty
             import termios
+            import tty
 
             fd = sys.stdin.fileno()
             old = termios.tcgetattr(fd)
@@ -267,7 +564,6 @@ class InteractiveCLI:
                     print(f"\r{prefix}{options[idx]}  [←↑↓→ 移动, Enter 确认, Esc 取消]", end="", flush=True)
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        return None
 
     def _print_config(self) -> None:
         print(f"""
@@ -414,8 +710,33 @@ class InteractiveCLI:
             else:
                 print(f"❌ 未找到记忆: {memory_id}\n")
 
+        elif subcmd == "learn":
+            if len(args) < 3:
+                print("❌ 用法: /memory learn <键> <值>\n")
+                return
+            print(f"✅ {auto_memory.remember(args[1], ' '.join(args[2:]))}\n")
+
+        elif subcmd == "forget":
+            if len(args) < 2:
+                print("❌ 用法: /memory forget <键>\n")
+                return
+            if auto_memory.forget(args[1]):
+                print(f"✅ 已遗忘: {args[1]}\n")
+            else:
+                print(f"❌ 未找到: {args[1]}\n")
+
+        elif subcmd == "facts":
+            facts = auto_memory.items()
+            if not facts:
+                print("ℹ️ 自动记忆为空。可用 /memory learn <键> <值> 添加。\n")
+                return
+            print(f"\n🧠 自动记忆 ({len(facts)} 条):")
+            for k, v in facts.items():
+                print(f"  • {k}: {v}")
+            print()
+
         else:
-            print(f"❓ 未知子命令: {subcmd}。用法: /memory [list|search|export|import|delete]\n")
+            print(f"❓ 未知子命令: {subcmd}。用法: /memory [list|search|learn|forget|facts|...]\n")
 
     async def _handle_init_command(self) -> None:
         """处理 /init 命令 - 初始化项目."""
@@ -556,14 +877,7 @@ class InteractiveCLI:
             )
 
             # 清空当前会话上下文（保留系统提示）
-            system_prompt = self.agent.context.system_prompt
             self.agent.context.clear()
-            if system_prompt:
-                self.agent.context.system_prompt = system_prompt
-                self.agent.context.messages.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
 
             # 添加压缩后的记忆作为上下文
             memory_summary = f"[历史会话总结] {summary[:200]}..."
@@ -593,21 +907,39 @@ class InteractiveCLI:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         print(f"{'─' * 60}\n")
 
+    async def _reload_skills(self) -> None:
+        """热重载所有技能。"""
+        count, tools_count = self.skill_manager.reload_all()
+        # 重新注入到 agent 上下文
+        if self.agent:
+            skills_prompt = self.skill_manager.to_prompt_fragment()
+            if skills_prompt:
+                self.agent.context.add_message("system", f"\n\n{skills_prompt}")
+        print(f"✅ 已重载 {count} 个技能，注册 {tools_count} 个工具。\n")
+
     def _print_skills(self) -> None:
         if not self.skill_manager.skills:
             print("ℹ️ 未加载任何技能。\n")
             return
         print("\n已加载的技能:")
         for skill in self.skill_manager.skills:
-            print(f"  • {skill.name} — {skill.description}")
+            tools_info = f" (+{len(skill.registered_tools)} 工具)" if skill.registered_tools else ""
+            print(f"  • {skill.name} [{skill.source}]{tools_info} — {skill.description}")
         print()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ClaxCode 交互式命令行")
     parser.add_argument("--project", "-p", default=".", help="项目目录")
-    parser.add_argument("--mode", "-m", default="ask", choices=["ask", "auto_edit", "plan", "auto_safe", "yolo"])
+    parser.add_argument(
+        "--mode", "-m", default="ask",
+        choices=["ask", "auto_edit", "plan", "auto_safe", "yolo"],
+    )
     parser.add_argument("--env", "-e", default=None, help=".env 文件路径")
+    parser.add_argument(
+        "--print", "-P", dest="one_shot", default=None, metavar="PROMPT",
+        help="非交互模式：执行单条指令后退出（工具日志走 stderr）",
+    )
     args = parser.parse_args()
 
     project_path = Path(args.project).resolve()
@@ -621,7 +953,10 @@ def main() -> None:
             print(f"⚠️ 未找到环境文件: {env_file}")
 
     cli = InteractiveCLI(project_path=str(project_path), permission_mode=args.mode)
-    asyncio.run(cli.run())
+    if args.one_shot:
+        asyncio.run(cli.one_shot(args.one_shot))
+    else:
+        asyncio.run(cli.run())
 
 
 if __name__ == "__main__":

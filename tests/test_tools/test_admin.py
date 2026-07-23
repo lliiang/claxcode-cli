@@ -23,7 +23,7 @@ return f"Hello, {name}!"
             "required": ["name"],
         },
     )
-    assert "registered successfully" in result
+    assert "已成功注册" in result
     # Verify it was added to registry
     assert registry.get("greet") is not None
     # Execute the new tool
@@ -40,23 +40,23 @@ async def test_admin_add_tool_duplicate():
     await tool.execute(name="dup_test", description="x", code="return 'x'")
     # Second registration should fail
     result = await tool.execute(name="dup_test", description="x", code="return 'x'")
-    assert "already exists" in result
+    assert "已存在" in result
 
 
 @pytest.mark.asyncio
 async def test_admin_add_tool_invalid_name():
     tool = AdminAddTool()
     result = await tool.execute(name="bad-name!", description="x", code="return 'x'")
-    assert "alphanumeric" in result
+    assert "字母数字" in result
 
 
 @pytest.mark.asyncio
 async def test_admin_add_tool_runtime_error():
     tool = AdminAddTool()
     result = await tool.execute(name="broken", description="x", code="return x  # undefined")
-    assert "registered successfully" in result
+    assert "已成功注册" in result
     # The error only surfaces when the generated tool is actually called
     broken_tool = registry.get("broken")
     assert broken_tool is not None
     output = await broken_tool.execute()
-    assert "Error" in output
+    assert "出错" in output

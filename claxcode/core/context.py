@@ -51,10 +51,44 @@ class ContextManager:
         text = "\n".join(str(m.get("content", "")) for m in self.messages)
         return estimate_tokens(text) + estimate_tokens(self.system_prompt)
 
-    def _maybe_compress(self) -> None:
+    def over_threshold(self) -> bool:
+        """Whether the estimated token count exceeds the compression threshold."""
         threshold = int(settings.max_context_tokens * settings.context_compression_threshold)
-        while self._total_tokens() > threshold and len(self.messages) > 3:
+        return self._total_tokens() > threshold
+
+    def pop_oldest(self, count: int) -> list[dict[str, Any]]:
+        """Remove and return up to `count` oldest non-system messages.
+
+        Orphaned tool results at the cut boundary are dropped as well —
+        providers reject a tool result without its assistant tool call.
+        """
+        end = min(1 + count, len(self.messages))
+        removed = self.messages[1:end]
+        del self.messages[1:end]
+        while len(self.messages) > 1 and self.messages[1].get("role") == "tool":
+            removed.append(self.messages.pop(1))
+        return removed
+
+    def insert_summary(self, summary: str) -> None:
+        """Insert a compression summary right after the system prompt."""
+        self.messages.insert(1, {"role": "system", "content": summary})
+
+    def restore(self, messages: list[dict[str, Any]]) -> None:
+        """Restore persisted messages after the system prompt.
+
+        Leading tool results are dropped — without their assistant tool call
+        (e.g. lost to compression in a previous session) providers reject them.
+        """
+        self.messages.extend(messages)
+        while len(self.messages) > 1 and self.messages[1].get("role") == "tool":
+            self.messages.pop(1)
+
+    def _maybe_compress(self) -> None:
+        """Emergency fallback: hard-drop oldest messages while over the threshold."""
+        while self.over_threshold() and len(self.messages) > 3:
             self.messages.pop(1)  # keep system at index 0
+        while len(self.messages) > 1 and self.messages[1].get("role") == "tool":
+            self.messages.pop(1)
 
     def clear(self) -> None:
         self.messages = []

@@ -1,14 +1,15 @@
 """FastAPI application entry point."""
 
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
+# Ensure all built-in tools are registered before API starts
+import claxcode.tools  # noqa: F401
+from claxcode.api import chat, session, subagents, tools
 from claxcode.config import settings
 from claxcode.memory.session_store import init_db
-from claxcode.api import session, chat, tools, subagents
 
 
 @asynccontextmanager

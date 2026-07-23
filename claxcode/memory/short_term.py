@@ -1,11 +1,10 @@
 """短期记忆管理器 - 会话级别存储."""
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, desc, delete
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from claxcode.memory.session_store import ShortTermMemoryORM, get_db_session
@@ -38,7 +37,7 @@ class ShortTermMemory:
                 session_id=session_id,
                 content=content,
                 is_compressed=is_compressed,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             db.add(memory)
             await db.commit()

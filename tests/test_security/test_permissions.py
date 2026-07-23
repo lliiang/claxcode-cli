@@ -15,25 +15,33 @@ def test_auto_edit_and_yolo_allow_all(mode):
 def test_plan_mode_blocks_write_and_execute():
     assert check_permission(PermissionMode.PLAN, "write_file", ["write"]) == (
         False,
-        "Plan mode is read-only",
+        "计划模式为只读模式",
     )
     assert check_permission(PermissionMode.PLAN, "run_shell", ["execute"]) == (
         False,
-        "Plan mode is read-only",
+        "计划模式为只读模式",
     )
     assert check_permission(PermissionMode.PLAN, "read_file", ["read"]) == (True, "")
 
 
-def test_ask_mode_always_asks():
-    assert check_permission(PermissionMode.ASK, "read_file", ["read"]) == (
+def test_ask_mode_allows_read_only_tools():
+    assert check_permission(PermissionMode.ASK, "read_file", ["read"]) == (True, "")
+
+
+def test_ask_mode_requires_approval_for_write_and_execute():
+    assert check_permission(PermissionMode.ASK, "write_file", ["write"]) == (
         False,
-        "Approval required",
+        "需要批准",
+    )
+    assert check_permission(PermissionMode.ASK, "run_shell", ["execute"]) == (
+        False,
+        "需要批准",
     )
 
 
 def test_auto_safe_blocks_execute():
     assert check_permission(PermissionMode.AUTO_SAFE, "run_shell", ["execute"]) == (
         False,
-        "Execution requires approval in auto-safe mode",
+        "在自动安全模式下执行操作需要批准",
     )
     assert check_permission(PermissionMode.AUTO_SAFE, "write_file", ["write"]) == (True, "")

@@ -13,7 +13,7 @@ from claxcode.tools.registry import tool
 
 # Lazy import — fail at runtime only if not installed
 try:
-    from playwright.async_api import async_playwright, Browser, Page
+    from playwright.async_api import Browser, Page, async_playwright
 except ImportError:
     async_playwright = None  # type: ignore[assignment]
 
