@@ -160,3 +160,11 @@ async def test_compress_context_skipped_under_threshold():
     agent = _make_agent("yolo")
     agent.context.add_message("user", "short")
     assert await agent._compress_context_if_needed() is False
+
+
+def test_default_system_prompt_has_methodology():
+    from claxcode.core.agent import DEFAULT_SYSTEM_PROMPT
+
+    assert "工作原则" in DEFAULT_SYSTEM_PROMPT
+    assert "最小改动" in DEFAULT_SYSTEM_PROMPT
+    assert "诚实汇报" in DEFAULT_SYSTEM_PROMPT

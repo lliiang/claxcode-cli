@@ -12,7 +12,7 @@
 - 🧩 **高度可扩展** — Skills 六层加载、Shell Hooks、子代理、35 个内置工具
 - 💾 **有记忆** — 会话断点续聊、LLM 摘要压缩、长期记忆、自动记忆偏好
 - 🖥️ **双前端** — 交互式 CLI（REPL）+ FastAPI SSE 流式服务
-- ✅ **110 个自动化测试**，ruff/mypy 受控
+- ✅ **138 个自动化测试**，ruff/mypy 受控
 
 ## 快速开始
 
@@ -87,9 +87,9 @@ claxcode-cli --mode auto_safe   # 可改代码，不跑命令
 | `/help` | 显示帮助（含技能命令） |
 | `/tools` | 列出 35 个可用工具 |
 | `/mode <mode>` | 切换权限模式（支持方向键选择） |
-| `/skills [reload\|create]` | 技能列表 / 热重载 / 新建技能 |
+| `/skills [list\|reload\|create]` | 技能列表 / 热重载 / 新建技能 |
 | `/project [list\|switch\|info]` | 项目管理 |
-| `/memory [list\|search\|learn\|forget\|facts\|export\|import\|delete]` | 记忆管理 |
+| `/memory [overview\|history\|list\|learn\|forget\|facts\|...]` | 记忆总览 / 会话历史 / 长期与自动记忆管理 |
 | `/compact` | 压缩当前会话并存入长期记忆 |
 | `/rollback [n\|list]` | 回滚最近 n 个编辑快照 |
 | `/audit [n]` | 查看最近 n 条审计日志 |
@@ -97,7 +97,7 @@ claxcode-cli --mode auto_safe   # 可改代码，不跑命令
 | `/config` `/debug` `/clear` | 配置 / 调试 / 清空上下文 |
 | `/exit` `/quit` | 退出 |
 
-输入前缀：`!cmd` 直接跑 shell · `@path` 内联文件内容 · `#text` 快速记忆。Skills 在 `## Commands` 中定义的命令（如 `/refactor_file`）可直接调用。
+输入前缀：`!cmd` 直接跑 shell · `@path` 内联文件内容 · `#text` 快速记忆。Skills 在 `## Commands` 中定义的命令（如 `/refactor_file`）可直接调用。输入行基于 prompt_toolkit：敲 `@` 模糊补全项目文件，敲 `/` 补全命令（含技能命令）。
 
 ## Skills — 可复用的能力包
 
@@ -105,7 +105,7 @@ claxcode-cli --mode auto_safe   # 可改代码，不跑命令
 
 | 级别 | 路径 |
 |---|---|
-| 内置（随包发布） | `claxcode/skills/`（自带 `python-refactor`） |
+| 内置（随包发布） | `claxcode/skills/`（任务工作流、缺陷修复、代码审查三套方法论 + Python 重构） |
 | 用户级 | `~/.claxcode/skills/`、`~/.agent/skills/` |
 | 项目级 | `./.claxcode/skills/`、`./.agent/skills/`、`./skills/` |
 
@@ -147,7 +147,7 @@ claxcode-cli --mode auto_safe   # 可改代码，不跑命令
 
 ## 工具一览（35 个）
 
-文件操作 ×7 · 搜索 ×3（glob/grep/代码库探索）· 执行 ×3（shell/测试/git）· Web ×2 · 浏览器 ×9（Playwright，可选 `[browser]`）· SSH ×5 · 代码智能 ×3（类型检查/定义/引用）· 记忆 ×1 · 管理 ×1 · 示例 ×1。新增工具只需在 `claxcode/tools/` 放一个模块，自动发现并注册。
+文件操作 ×7 · 搜索 ×3（glob/grep/代码库探索）· 执行 ×3（shell/测试/git）· Web ×2 · 浏览器 ×9（Playwright，可选 `[browser]`；会话跨调用与跨对话连续，可"导航→点击→输入→截图"链式操作同一页面）· SSH ×5 · 代码智能 ×3（类型检查/定义/引用）· 记忆 ×1 · 管理 ×1 · 示例 ×1。新增工具只需在 `claxcode/tools/` 放一个模块，自动发现并注册。
 
 ## 子代理
 
@@ -188,10 +188,11 @@ LLM_CUSTOM_CONFIG={"request_template":{"url":"http://localhost:8000/chat","metho
 
 ## 与 Claude Code 的对比
 
-覆盖其核心工作流的 **~80%**：Agentic 循环、流式输出、权限审批、快照回滚、技能、钩子、子代理、记忆、headless、`!`/`@`/`#` 前缀均已具备。主要差异：
+覆盖其核心工作流的 **~85%**：Agentic 循环、流式输出、权限审批、快照回滚、技能、钩子、子代理、记忆、headless、`!`/`@`/`#` 前缀、视觉理解均已具备。主要差异：
 
+- ✅ **视觉理解**：`@图片路径` 直接看图，浏览器截图自动进入模型视野（OpenAI 兼容 / Anthropic / Ollama 格式自动适配；`.env` 中 `LLM_VISION=false` 可关闭）
 - ❌ MCP（Model Context Protocol）— 规划中，下一优先级
-- ❌ 多模态（图片输入）、IDE 插件
+- ❌ IDE 插件
 - ⚠️ 会话恢复为"自动续上次"，暂无 `/resume` 列表选择器
 - ➕ 独有：SSH/浏览器工具、自定义 HTTP Provider 模板、SSE API 服务
 
@@ -204,13 +205,29 @@ LLM_CUSTOM_CONFIG={"request_template":{"url":"http://localhost:8000/chat","metho
 
 ## 开发与测试
 
+编码原则（最少代码、最简单实现）：扁平优于嵌套；重复三行优于过早抽象；不为想象中的需求加配置；死代码立即删除；新功能必带测试。
+
 ```bash
-pytest          # 110 个测试
+pytest          # 157 个测试
 ruff check claxcode tests
 mypy claxcode
 ```
 
 目录结构、设计决策与扩展指南见 [AGENTS.md](AGENTS.md)。欢迎 Issue / PR。
+
+## 常见问题
+
+**Windows cmd 提示 "claxcode-cli 不是内部或外部命令"？**
+pip 安装的命令在 Python 的 `Scripts` 目录（venv 为 `.venv\Scripts`，`--user` 安装为 `%APPDATA%\Python\Python3xx\Scripts`），需加入 PATH；也可以直接用 `python -m claxcode.cli` 启动。
+
+**cmd 下输出乱码或报错？**
+CLI 启动时会自动把控制台输出切换为 UTF-8；仍有问题请使用 Windows Terminal，或先执行 `chcp 65001`。
+
+**ssh_execute 执行很慢？**
+远程命令按 `timeout`（默认 300 秒）自动超时并返回已产生的输出；交互模式下随时可按 Ctrl+C 中止。
+
+**想用有头浏览器观察操作过程？**
+直接对 agent 说"用有头浏览器打开 …"即可（模式切换时浏览器自动重启，后续操作连续生效）；要改全局默认，在 `.env` 中设置 `BROWSER_HEADLESS=false`。
 
 ## License
 

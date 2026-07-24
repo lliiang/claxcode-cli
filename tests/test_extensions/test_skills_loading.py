@@ -21,6 +21,21 @@ def test_builtin_skills_dir_loads():
     assert any(s.name == "Python Refactoring" and s.source == "builtin" for s in mgr.skills)
 
 
+def test_builtin_methodology_skills_load():
+    mgr = SkillManager()
+    mgr.load_skill_dir(BUILTIN_SKILLS_DIR, source="builtin")
+    names = {s.name for s in mgr.skills}
+    assert {"Python Refactoring", "Task Workflow", "Bug Fix", "Code Review"} <= names
+
+
+def test_builtin_skill_commands_available():
+    mgr = SkillManager()
+    mgr.load_skill_dir(BUILTIN_SKILLS_DIR, source="builtin")
+    for cmd in ("task", "plan", "fix", "review"):
+        assert mgr.find_command(cmd) is not None
+    assert mgr.find_command("review")["skill"] == "Code Review"
+
+
 def test_same_name_skill_is_overridden_by_later_source(tmp_path):
     low = tmp_path / "low"
     high = tmp_path / "high"

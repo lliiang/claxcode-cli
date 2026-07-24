@@ -1,5 +1,7 @@
 """SSH tools for remote server management using paramiko."""
 
+import asyncio
+import time
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -7,6 +9,7 @@ from typing import Any
 import paramiko
 
 from claxcode.tools.base import Tool
+from claxcode.tools.execution import is_tool_cancelled
 from claxcode.tools.registry import tool
 
 # 危险命令列表
@@ -72,7 +75,7 @@ class SSHConnectionManager:
     _instance = None
     _connections: dict[str, paramiko.SSHClient] = {}
 
-    def __new__(cls):
+    def __new__(cls) -> "SSHConnectionManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -263,7 +266,7 @@ class SSHExecute(Tool):
             "private_key_path": {"type": "string", "description": "私钥路径（可选）"},
             "command": {"type": "string", "description": "要执行的命令"},
             "cwd": {"type": "string", "default": "", "description": "工作目录（可选）"},
-            "timeout": {"type": "integer", "default": 60, "description": "命令超时时间（秒）"},
+            "timeout": {"type": "integer", "default": 300, "description": "命令超时时间（秒）"},
         },
         "required": ["host", "username", "command"],
     }
@@ -279,7 +282,7 @@ class SSHExecute(Tool):
         private_key_path: str | None = None,
         command: str = "",
         cwd: str = "",
-        timeout: int = 60,
+        timeout: int = 300,
         **kwargs: Any,
     ) -> str:
         try:
@@ -302,28 +305,77 @@ class SSHExecute(Tool):
             if cwd:
                 full_command = f"cd {cwd} && {command}"
 
-            # 执行命令
-            stdin, stdout, stderr = client.exec_command(full_command, timeout=timeout)
-
-            # 读取输出
-            exit_code = stdout.channel.recv_exit_status()
-            output = stdout.read().decode("utf-8", errors="replace")
-            error = stderr.read().decode("utf-8", errors="replace")
-
-            # 构建结果
-            result = []
-            if output:
-                result.append(f"[stdout]\n{output}")
-            if error:
-                result.append(f"[stderr]\n{error}")
-            result.append(f"[exit code: {exit_code}]")
-
-            return "\n".join(result)
+            # 执行命令（增量读取，支持超时和中止）
+            return await _run_remote_command(client, full_command, timeout)
 
         except paramiko.AuthenticationException:
             return "❌ 认证失败: 请检查用户名、密码或密钥"
         except Exception as e:
             return f"❌ 执行失败: {e}"
+
+
+async def _run_remote_command(client: paramiko.SSHClient, command: str, timeout: int) -> str:
+    """Run a remote command, streaming output incrementally.
+
+    Polls the channel so the event loop stays responsive: honours the
+    timeout and the user-cancel flag, and always returns partial output.
+    """
+    transport = client.get_transport()
+    if transport is None:
+        return "❌ SSH 连接已断开"
+
+    channel = transport.open_session()
+    out_chunks: list[bytes] = []
+    err_chunks: list[bytes] = []
+    try:
+        channel.exec_command(command)
+        deadline = time.monotonic() + timeout
+
+        while not channel.exit_status_ready():
+            _drain_channel(channel, out_chunks, err_chunks)
+            if is_tool_cancelled():
+                return _format_remote_result(out_chunks, err_chunks, None, "⏹️ 已被用户中止")
+            if time.monotonic() > deadline:
+                return _format_remote_result(out_chunks, err_chunks, None, f"⏱️ 超时（{timeout}秒）")
+            await asyncio.sleep(0.1)
+
+        # 命令已退出，读取剩余输出
+        for _ in range(100):
+            _drain_channel(channel, out_chunks, err_chunks)
+            if not channel.recv_ready() and not channel.recv_stderr_ready():
+                break
+            await asyncio.sleep(0.05)
+        return _format_remote_result(out_chunks, err_chunks, channel.recv_exit_status(), "")
+    finally:
+        channel.close()
+
+
+def _drain_channel(channel, out_chunks: list[bytes], err_chunks: list[bytes]) -> None:
+    """Read all currently available stdout/stderr data from the channel."""
+    while channel.recv_ready():
+        out_chunks.append(channel.recv(4096))
+    while channel.recv_stderr_ready():
+        err_chunks.append(channel.recv_stderr(4096))
+
+
+def _format_remote_result(
+    out_chunks: list[bytes],
+    err_chunks: list[bytes],
+    exit_code: int | None,
+    note: str,
+) -> str:
+    output = b"".join(out_chunks).decode("utf-8", errors="replace")
+    error = b"".join(err_chunks).decode("utf-8", errors="replace")
+    result = []
+    if output:
+        result.append(f"[stdout]\n{output}")
+    if error:
+        result.append(f"[stderr]\n{error}")
+    if exit_code is not None:
+        result.append(f"[exit code: {exit_code}]")
+    if note:
+        result.append(note)
+    return "\n".join(result) if result else "(无输出)"
 
 
 @tool

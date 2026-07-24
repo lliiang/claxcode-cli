@@ -149,3 +149,39 @@ async def test_edit_file_ambiguous(tmp_path):
     )
     assert "3 处" in result
     assert "1-1" in result
+
+
+@pytest.mark.asyncio
+async def test_str_replace_all_reports_correct_count(tmp_path):
+    f = tmp_path / "replace.txt"
+    f.write_text("x x x x", encoding="utf-8")
+    tool = StrReplaceFile()
+    result = await tool.execute(path=str(f), old="x", new="y", replace_all=True)
+    assert "替换 4 处" in result
+    assert f.read_text(encoding="utf-8") == "y y y y"
+
+
+@pytest.mark.asyncio
+async def test_str_replace_all_same_text_count(tmp_path):
+    f = tmp_path / "replace.txt"
+    f.write_text("a a a", encoding="utf-8")
+    tool = StrReplaceFile()
+    result = await tool.execute(path=str(f), old="a", new="a", replace_all=True)
+    assert "替换 3 处" in result
+
+
+@pytest.mark.asyncio
+async def test_edit_file_conflicting_blocks_rejected(tmp_path):
+    f = tmp_path / "edit.txt"
+    original = "abc\n"
+    f.write_text(original, encoding="utf-8")
+    tool = EditFile()
+    result = await tool.execute(
+        path=str(f),
+        edits=[
+            {"old_string": "abc", "new_string": "xyz"},
+            {"old_string": "abc", "new_string": "123"},
+        ],
+    )
+    assert "冲突" in result
+    assert f.read_text(encoding="utf-8") == original  # 文件未被破坏

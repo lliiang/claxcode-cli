@@ -66,17 +66,6 @@ class LongTermMemoryORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
 
-class ShortTermMemoryORM(Base):
-    """短期记忆表 - 会话级别存储"""
-    __tablename__ = "short_term_memories"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(36), default="")
-    content: Mapped[str] = mapped_column(Text, default="")
-    is_compressed: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-
-
 class ProjectMemoryORM(Base):
     """项目记忆表 - 项目级别存储"""
     __tablename__ = "project_memories"

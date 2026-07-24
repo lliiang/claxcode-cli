@@ -1,11 +1,14 @@
 """Web tools."""
 
+import re
 from typing import Any
 
 import httpx
 
 from claxcode.tools.base import Tool
 from claxcode.tools.registry import tool
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClaxCode/0.1"
 
 
 @tool
@@ -25,7 +28,9 @@ class FetchURL(Tool):
 
     async def execute(self, url: str, max_length: int = 10000, **kwargs: Any) -> str:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(
+                timeout=30, headers={"User-Agent": USER_AGENT}
+            ) as client:
                 resp = await client.get(url, follow_redirects=True)
                 resp.raise_for_status()
                 text = resp.text
@@ -54,18 +59,20 @@ class WebSearch(Tool):
     required_permissions = ["web"]
 
     async def execute(self, query: str, max_results: int = 5, **kwargs: Any) -> str:
-        search_url = f"https://html.duckduckgo.com/html/?q={httpx.URL.encode(query)}"
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(search_url)
+            async with httpx.AsyncClient(
+                timeout=30, headers={"User-Agent": USER_AGENT}
+            ) as client:
+                resp = await client.get(
+                    "https://html.duckduckgo.com/html/", params={"q": query}
+                )
                 resp.raise_for_status()
-                html = resp.text
-                # Very basic result extraction
                 results = []
-                import re
-                for link in re.findall(r'<a rel="nofollow" class="result__a" href="(.*?)">(.*?)</a>', html):
-                    href, title = link
-                    title = re.sub(r'<.*?>', '', title)
+                for href, title in re.findall(
+                    r'<a rel="nofollow" class="result__a" href="(.*?)">(.*?)</a>',
+                    resp.text,
+                ):
+                    title = re.sub(r"<.*?>", "", title)
                     results.append(f"{title}\n{href}")
                     if len(results) >= max_results:
                         break

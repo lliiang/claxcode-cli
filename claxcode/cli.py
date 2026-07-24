@@ -26,6 +26,7 @@ import claxcode.tools  # noqa: F401
 from claxcode.config import settings
 from claxcode.core.agent import Agent
 from claxcode.core.checkpoint import CheckpointManager
+from claxcode.core.images import is_image_file, load_image_part
 from claxcode.core.models import get_provider
 from claxcode.extensions.skills import SkillManager
 from claxcode.memory import (
@@ -38,6 +39,14 @@ from claxcode.memory.project_context import load_project_context
 from claxcode.memory.session_store import get_session_messages, save_session_messages
 from claxcode.security.audit import audit_logger
 from claxcode.tools.registry import registry
+
+try:
+    from prompt_toolkit import PromptSession
+
+    from claxcode.cli_completion import CliCompleter
+except ImportError:  # prompt_toolkit 未安装时退化为朴素 input()
+    PromptSession = None  # type: ignore[assignment]
+    CliCompleter = None  # type: ignore[assignment,misc]
 
 
 @dataclass
@@ -61,6 +70,29 @@ class InteractiveCLI:
         self.skill_manager = SkillManager()
         self._load_skills()
         self._command_table = self._build_commands()
+        self._prompt_session = self._create_prompt_session()
+
+    def _create_prompt_session(self) -> "PromptSession[Any] | None":
+        """Build a prompt session with @file and /command completion, if available.
+
+        Falls back to plain input() when prompt_toolkit is missing or no real
+        console is attached (e.g. tests, CI, piped output).
+        """
+        if PromptSession is None or CliCompleter is None:
+            return None
+        completer = CliCompleter(self.project_path, self._completable_commands)
+        with suppress(Exception):
+            return PromptSession(completer=completer)
+        return None
+
+    def _completable_commands(self) -> list[tuple[str, str]]:
+        """Slash commands (builtin + skill-defined) for completion."""
+        items = [(name, entry.description) for name, entry in self._command_table.items()]
+        items += [
+            ("/" + c["name"], c["description"])
+            for c in self.skill_manager.get_skill_commands()
+        ]
+        return items
 
     def _load_skills(self) -> None:
         """Load built-in, user-global and project skills."""
@@ -115,9 +147,12 @@ class InteractiveCLI:
             elif user_input.startswith("#"):
                 self._quick_memory(user_input[1:].strip())
             else:
-                await self._chat(self._expand_mentions(user_input))
+                text, images = self._expand_mentions(user_input)
+                await self._chat(text, images=images)
 
     async def _read_input(self, prompt: str = "❯ ") -> str:
+        if self._prompt_session is not None:
+            return await self._prompt_session.prompt_async(prompt)
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: input(prompt))
 
@@ -162,7 +197,7 @@ class InteractiveCLI:
         with suppress(Exception):  # 持久化失败不应影响交互
             await save_session_messages(self.session_id, self.agent.context.messages[1:])
 
-    async def _chat(self, message: str) -> None:
+    async def _chat(self, message: str, images: list[dict] | None = None) -> None:
         if self.agent is None:
             return
         print()
@@ -171,7 +206,7 @@ class InteractiveCLI:
         from claxcode.tools.execution import set_tool_cancelled
 
         try:
-            async for event in self.agent.run(message):
+            async for event in self.agent.run(message, images=images):
                 etype = event.get("type")
                 if etype == "thinking":
                     print(f"💭 {event['content']}")
@@ -220,13 +255,13 @@ class InteractiveCLI:
             "/mode": SlashCommand(
                 "/mode <mode>", "设置权限模式 (ask|auto_edit|plan|auto_safe|yolo)", self._cmd_mode
             ),
-            "/skills": SlashCommand("/skills [reload|create]", "技能管理", self._cmd_skills),
+            "/skills": SlashCommand("/skills [list|reload|create]", "技能管理", self._cmd_skills),
             "/config": SlashCommand("/config", "显示当前 LLM 配置", self._cmd_config),
             "/debug": SlashCommand("/debug", "切换调试模式", self._cmd_debug),
             "/clear": SlashCommand("/clear", "清除对话上下文", self._cmd_clear),
             "/project": SlashCommand("/project [list|switch|info]", "项目管理", self._cmd_project),
             "/memory": SlashCommand(
-                "/memory [list|search|learn|forget|facts|...]", "记忆管理", self._cmd_memory
+                "/memory [history|list|learn|forget|facts|...]", "记忆管理", self._cmd_memory
             ),
             "/init": SlashCommand("/init", "初始化项目信息", self._cmd_init),
             "/compact": SlashCommand("/compact", "压缩会话到长期记忆", self._cmd_compact),
@@ -261,21 +296,29 @@ class InteractiveCLI:
         key = f"note_{datetime.now():%Y%m%d_%H%M%S}"
         print(f"✅ {auto_memory.remember(key, text)}（可用 /memory forget {key} 删除）\n")
 
-    def _expand_mentions(self, text: str) -> str:
-        """Inline @path file contents into the message (up to 8000 chars each)."""
-        blocks = []
+    def _expand_mentions(self, text: str) -> tuple[str, list[dict]]:
+        """Inline @path text files; @image files become attached image parts."""
+        blocks: list[str] = []
+        images: list[dict] = []
         for token in text.split():
             if not token.startswith("@") or len(token) < 2:
                 continue
             path = (self.project_path / token[1:]).resolve()
             if not path.is_file():
                 continue
+            if is_image_file(path):
+                part = load_image_part(path)
+                if part is not None:
+                    images.append(part)
+                else:
+                    blocks.append(f"\n\n[图片 {token[1:]} 未附加（视觉已禁用或超过大小限制）]")
+                continue
             try:
                 content = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             blocks.append(f"\n\n[文件 {token[1:]} 的内容]\n```\n{content[:8000]}\n```")
-        return text + "".join(blocks)
+        return text + "".join(blocks), images
 
     async def one_shot(self, prompt: str) -> None:
         """Run a single prompt non-interactively (content to stdout)."""
@@ -285,7 +328,8 @@ class InteractiveCLI:
             project_path=str(self.project_path),
             permission_mode=self.permission_mode,
         )
-        async for event in self.agent.run(self._expand_mentions(prompt)):
+        text, images = self._expand_mentions(prompt)
+        async for event in self.agent.run(text, images=images):
             etype = event.get("type")
             if etype == "message_delta":
                 print(event["content"], end="", flush=True)
@@ -307,12 +351,15 @@ class InteractiveCLI:
         return False
 
     async def _cmd_skills(self, args: list[str]) -> bool:
-        if args and args[0] == "reload":
+        subcmd = args[0] if args else "list"
+        if subcmd == "list":
+            self._print_skills()
+        elif subcmd == "reload":
             await self._reload_skills()
-        elif args and args[0] == "create":
+        elif subcmd == "create":
             await self._create_skill(args[1:])
         else:
-            self._print_skills()
+            print(f"❓ 未知子命令: {subcmd}。用法: /skills [list|reload|create]\n")
         return False
 
     async def _cmd_config(self, args: list[str]) -> bool:
@@ -643,9 +690,15 @@ from claxcode.tools.registry import tool
 
     async def _handle_memory_command(self, args: list[str]) -> None:
         """处理 /memory 命令."""
-        subcmd = args[0] if args else "list"
+        subcmd = args[0] if args else "overview"
 
-        if subcmd == "list":
+        if subcmd == "overview":
+            await self._memory_overview()
+
+        elif subcmd == "history":
+            self._memory_history(args)
+
+        elif subcmd == "list":
             memories = await long_term_memory.list_all(limit=20)
             if not memories:
                 print("ℹ️ 长期记忆为空。\n")
@@ -736,7 +789,43 @@ from claxcode.tools.registry import tool
             print()
 
         else:
-            print(f"❓ 未知子命令: {subcmd}。用法: /memory [list|search|learn|forget|facts|...]\n")
+            print(f"❓ 未知子命令: {subcmd}。用法: /memory [history|list|learn|forget|...]\n")
+
+    async def _memory_overview(self) -> None:
+        """打印记忆总览：长期记忆、自动记忆、当前会话。"""
+        memories = await long_term_memory.list_all(limit=100)
+        facts = auto_memory.items()
+        msg_count = len(self.agent.context.messages) - 1 if self.agent else 0
+
+        print("\n🧠 记忆总览:")
+        print(f"  • 长期记忆: {len(memories)} 条（/memory list 查看，/compact 生成）")
+        for m in memories[:3]:
+            print(f"      - {m.get('compressed_content', '')[:60]}")
+        print(f"  • 自动记忆: {len(facts)} 条（/memory facts 查看）")
+        print(f"  • 当前会话消息: {max(msg_count, 0)} 条（/memory history 查看）")
+        print()
+
+    def _memory_history(self, args: list[str]) -> None:
+        """显示当前会话的最近消息（含恢复的会话）。"""
+        if not self.agent:
+            print("❌ 代理未初始化。\n")
+            return
+        limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 20
+        messages = [m for m in self.agent.context.messages if m.get("role") != "system"]
+        if not messages:
+            print("ℹ️ 当前会话没有历史消息。\n")
+            return
+        shown = messages[-limit:]
+        print(f"\n📜 会话历史（共 {len(messages)} 条，显示最近 {len(shown)} 条）:")
+        for m in shown:
+            role = m.get("role", "?")
+            content = str(m.get("content") or "")
+            if role == "assistant" and not content and m.get("tool_calls"):
+                names = ", ".join(tc["function"]["name"] for tc in m["tool_calls"])
+                content = f"[调用工具: {names}]"
+            icon = {"user": "👤", "assistant": "🤖", "tool": "🔧"}.get(role, "•")
+            print(f"  {icon} {content.replace(chr(10), ' ')[:80]}")
+        print()
 
     async def _handle_init_command(self) -> None:
         """处理 /init 命令 - 初始化项目."""
@@ -876,6 +965,9 @@ from claxcode.tools.registry import tool
                 project_path=str(self.project_path),
             )
 
+            # 同步更新项目记忆摘要（后续会话会自动注入）
+            await project_memory.update_summary(str(self.project_path), summary)
+
             # 清空当前会话上下文（保留系统提示）
             self.agent.context.clear()
 
@@ -928,7 +1020,17 @@ from claxcode.tools.registry import tool
         print()
 
 
+def _setup_console_utf8() -> None:
+    """Reconfigure stdout/stderr as UTF-8 so emoji output works on Windows cmd (GBK)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with suppress(Exception):
+                reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    _setup_console_utf8()
     parser = argparse.ArgumentParser(description="ClaxCode 交互式命令行")
     parser.add_argument("--project", "-p", default=".", help="项目目录")
     parser.add_argument(

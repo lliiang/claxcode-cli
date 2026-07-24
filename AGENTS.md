@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repository. Assumes no prior knowl
 
 ClaxCode is an **agentic coding assistant** (inspired by Claude Code) written in Python. It has two front-ends sharing the same core:
 
-- **Interactive CLI** (`claxcode-cli`) — a REPL-style terminal assistant. Slash commands are declared in a dispatch table in `cli.py` (and `/help` is generated from it); skill-defined commands (`## Commands` in SKILL.md) are routed to the agent as instructions. Input prefixes: `!cmd` runs a shell command directly, `#text` saves a quick auto-memory note, `@path` inlines a file's content. `--print/-P PROMPT` runs one prompt non-interactively (headless). The conversation is persisted per turn and resumed on next launch (`.claxcode/cli_session`).
+- **Interactive CLI** (`claxcode-cli`) — a REPL-style terminal assistant. Slash commands are declared in a dispatch table in `cli.py` (and `/help` is generated from it); skill-defined commands (`## Commands` in SKILL.md) are routed to the agent as instructions. Input prefixes: `!cmd` runs a shell command directly, `#text` saves a quick auto-memory note, `@path` inlines a file's content. `--print/-P PROMPT` runs one prompt non-interactively (headless). Input uses prompt_toolkit (`cli_completion.py`): `@` fuzzy-completes project files (ignoring dependency/cache dirs), `/` completes builtin and skill commands; falls back to plain `input()` when no console is attached. The conversation is persisted per turn and resumed on next launch (`.claxcode/cli_session`).
 - **HTTP API server** (`claxcode`) — a FastAPI app that streams chat events over SSE.
 
 The core is an **Agentic Loop** (`claxcode/core/agent.py`): gather context -> think (LLM streaming) -> act (tool calls) -> verify, capped at `max_iterations = 10` per user message. The agent talks to an abstracted LLM provider, calls tools from a central registry, snapshots files before editing them, and injects project context (`CLAUDE.md`), skills, and long-term/project memories into the system prompt.
@@ -36,10 +36,10 @@ claxcode/
 │   └── checkpoint.py  # CheckpointManager: snapshots files into .claxcode/snapshots/ before edits; manifest-based list/restore (rollback)
 ├── tools/             # Tool base class, registry, and built-in tools (auto-discovered)
 ├── subagents/         # Subagent base + explore/planner (read-only) and executor (all tools)
-├── memory/            # session_store (SQLAlchemy ORM + init_db), long/short-term & project memory
+├── memory/            # session_store (SQLAlchemy ORM + init_db), long-term & project memory, durable auto_memory
 ├── extensions/        # skills.py and hooks.py (working); mcp.py, plugins.py are STUBS
 ├── security/          # permissions.py (modes, enforced in the agent loop); audit.py (durable JSONL logger)
-├── skills/            # Built-in skill packages shipped with the app (SKILL.md + optional tools.py)
+├── skills/            # Built-in skills shipped with the app: task-workflow, bug-fix, code-review, python-refactor
 └── models/            # Pydantic request/response models for the API
 
 tests/                 # pytest suite, mirrors the package layout
@@ -50,7 +50,8 @@ tests/                 # pytest suite, mirrors the package layout
 - All tools subclass `Tool` (`claxcode/tools/base.py`): class attrs `name`, `description`, `input_schema` (JSON Schema), `category`, `required_permissions` (subset of `"read"`, `"write"`, `"execute"`, `"web"`); implement `async execute(**kwargs) -> str`.
 - The `@tool` decorator (`claxcode/tools/registry.py`) registers an instance in the global `registry`.
 - `claxcode/tools/__init__.py` **auto-imports every module in the package** via `pkgutil` — dropping a new module into `claxcode/tools/` is enough to register its tools. Both entry points import `claxcode.tools` for this side effect.
-- Built-in tools (35 total): file ops (`read_file`, `write_file`, `str_replace_file`, `view_file`, `edit_file`, `create_directory`, `rename_file`), search (`glob_search`, `grep_search`, `explore_codebase`), execution (`run_shell`, `run_tests`, `git_command`), web (`fetch_url`, `web_search` — DuckDuckGo HTML scraping), browser (9 Playwright tools), SSH (5 paramiko tools), code intelligence (`type_check`, `find_definition`, `find_references`), admin (`admin_add_tool`), memory (`remember_fact`), example (`calculate`).
+- Built-in tools (35 total): file ops (`read_file`, `write_file`, `str_replace_file`, `view_file`, `edit_file`, `create_directory`, `rename_file`), search (`glob_search`, `grep_search`, `explore_codebase`), execution (`run_shell`, `run_tests`, `git_command`), web (`fetch_url`, `web_search` — DuckDuckGo HTML scraping), browser (9 Playwright tools on a persistent, actor-owned session — the same page stays open across tool calls and conversation turns; screenshots attach as image content parts for vision-capable models), SSH (5 paramiko tools), code intelligence (`type_check`, `find_definition`, `find_references`), admin (`admin_add_tool`), memory (`remember_fact`), example (`calculate`).
+- Long-running tools (e.g. `ssh_execute`) poll the cancel flag in `tools/execution.py` (`is_tool_cancelled()`): the agent resets it before each user message, the CLI sets it on Ctrl+C.
 
 ### LLM providers
 
@@ -58,7 +59,7 @@ tests/                 # pytest suite, mirrors the package layout
 
 ### Persistence
 
-`claxcode/memory/session_store.py` holds all ORM tables (`sessions`, `subagent_tasks`, `long_term_memories`, `short_term_memories`, `project_memories`). Tables are created with `Base.metadata.create_all` in `init_db()` — **there are no migrations** (Alembic is a noted future option). Runtime data lives under `./.claxcode/` (`claxcode.db`, `snapshots/`). Conversation messages are persisted per chat turn (`save_session_messages`/`get_session_messages` on the `sessions.messages` column): the API restores them per request, and the CLI resumes the last session via `.claxcode/cli_session`. `memory/auto_memory.py` is a durable JSON key-value store at `~/.claxcode/auto_memory.json` — injected into the system prompt, writable via the `remember_fact` tool or `/memory learn` in the CLI. (`short_term_memory` exists but is currently unused.)
+`claxcode/memory/session_store.py` holds all ORM tables (`sessions`, `subagent_tasks`, `long_term_memories`, `project_memories`). Tables are created with `Base.metadata.create_all` in `init_db()` — **there are no migrations** (Alembic is a noted future option). Runtime data lives under `./.claxcode/` (`claxcode.db`, `snapshots/`). Conversation messages are persisted per chat turn (`save_session_messages`/`get_session_messages` on the `sessions.messages` column): the API restores them per request, and the CLI resumes the last session via `.claxcode/cli_session`. `memory/auto_memory.py` is a durable JSON key-value store at `~/.claxcode/auto_memory.json` — injected into the system prompt, writable via the `remember_fact` tool or `/memory learn` in the CLI. `/compact` also writes the project `context_summary` (via `project_memory.update_summary`), which is injected into future sessions.
 
 ### Language convention
 
@@ -88,7 +89,7 @@ API surface: `POST/GET/GET{id}/DELETE /sessions`, `POST /sessions/{id}/chat` (SS
 ## Testing
 
 ```bash
-pytest            # 110 tests, all passing at time of writing
+pytest            # 170 tests, all passing at time of writing
 ```
 
 - Config in `pyproject.toml`: `asyncio_mode = "auto"`, `testpaths = ["tests"]` — async tests need no decorator.
@@ -97,6 +98,14 @@ pytest            # 110 tests, all passing at time of writing
 - `pytest-httpx` is available for mocking outbound LLM/HTTP calls; tests must not require a real LLM or network.
 
 ## Code Style
+
+**Principles — minimal code, simplest implementation:**
+
+1. Write the least code that satisfies the requirement — nothing more.
+2. Flat over nested: early returns, no deep if-chains, no complex nesting.
+3. Three similar lines beat a premature abstraction; no speculative configurability.
+4. Delete dead code immediately (vulture is run periodically); fix bugs at the root, not at call sites.
+5. Every feature ships with fast, network-free tests in the same PR of work.
 
 - Configured in `pyproject.toml`: **ruff** (`line-length = 100`, `target-version = "py311"`, rules `E,F,I,N,W,UP,B,C4,SIM`) and **mypy** (`strict = true`, py3.11).
 - Current state: `ruff check claxcode tests` reports ~44 errors and `mypy claxcode` ~131 errors — **neither is clean**, so do not treat them as gates, but do not add new violations either.
@@ -116,7 +125,8 @@ Copy `.env.example` to `.env`. All settings are env-driven (`claxcode/config.py`
 | `DATABASE_URL` | `sqlite+aiosqlite:///./.claxcode/claxcode.db` | |
 | `PERMISSION_MODE` | `ask` | `ask` / `auto_edit` / `plan` / `auto_safe` / `yolo` |
 | `MAX_CONTEXT_TOKENS`, `CONTEXT_COMPRESSION_THRESHOLD` | `128000` / `0.85` | |
-| `HOST`, `PORT`, `CLAXCODE_DEBUG`, `TOOL_TIMEOUT` | `127.0.0.1` / `8000` / `false` / `60` | |
+| `LLM_VISION` | `true` | Attach images as multimodal content parts (`@image`, browser screenshots) |
+| `HOST`, `PORT`, `CLAXCODE_DEBUG`, `TOOL_TIMEOUT`, `BROWSER_HEADLESS` | `127.0.0.1` / `8000` / `false` / `60` / `true` | |
 
 Note: `python-dotenv` is declared in `pyproject.toml`; `playwright` is an optional extra (`pip install -e ".[browser]"`).
 

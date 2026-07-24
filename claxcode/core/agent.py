@@ -16,13 +16,20 @@ from claxcode.memory.auto_memory import auto_memory
 from claxcode.memory.project_context import load_project_context
 from claxcode.security.audit import audit_logger
 from claxcode.security.permissions import PermissionMode, check_permission
-from claxcode.tools.base import Tool
+from claxcode.tools.base import Tool, drain_images
+from claxcode.tools.execution import clear_tool_cancelled
 from claxcode.tools.registry import registry
 
 DEFAULT_SYSTEM_PROMPT = """你是 ClaxCode，一个智能编程助手。
 你帮助用户编写、编辑、调试和理解代码。
 当你需要与项目交互时，请使用提供的工具。
-始终逐步思考并解释你的推理过程。"""
+始终逐步思考并解释你的推理过程。
+
+## 工作原则
+1. 先理解后行动：改代码前先用工具读懂相关实现，不臆测路径、签名和行为。
+2. 最小改动：只做任务要求的事，用最少代码、最简单实现，不顺手重构。
+3. 小步验证：每完成一个改动就验证（跑测试或读回文件），再往下走。
+4. 诚实汇报：没验证过的不要声称完成；遇到阻塞如实说明并给出下一步建议。"""
 
 
 class Agent:
@@ -100,14 +107,18 @@ class Agent:
         except Exception:
             pass  # 记忆加载失败不应阻塞主流程
 
-    async def run(self, user_message: str) -> AsyncIterator[dict]:
+    async def run(self, user_message: str, images: list[dict] | None = None) -> AsyncIterator[dict]:
         """Stream agent events."""
+        clear_tool_cancelled()
         if not self._memory_loaded:
             await self._load_memories()
             self._memory_loaded = True
 
         yield {"type": "thinking", "content": "正在收集上下文..."}
-        self.context.add_message("user", user_message)
+        if images:
+            self.context.add_user_content(user_message, images)
+        else:
+            self.context.add_message("user", user_message)
 
         for iteration in range(self.max_iterations):
             # Prepare available tools
@@ -202,6 +213,10 @@ class Agent:
                 result = await self._execute_tool(name, args)
                 yield {"type": "tool_result", "name": name, "output": result}
                 self.context.add_tool_result(tc["id"], name, result)
+
+                # 工具附带的图片（如浏览器截图）作为视觉内容注入对话
+                for image_part in drain_images():
+                    self.context.add_user_content(f"[{name} 附加的图片]", [image_part])
 
                 if self.debug:
                     yield {

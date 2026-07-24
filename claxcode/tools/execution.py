@@ -16,6 +16,17 @@ def set_tool_cancelled() -> None:
     _tool_cancelled = True
 
 
+def clear_tool_cancelled() -> None:
+    """Reset the cancellation flag (called before each user message)."""
+    global _tool_cancelled
+    _tool_cancelled = False
+
+
+def is_tool_cancelled() -> bool:
+    """Return True if the user requested cancellation (Ctrl+C)."""
+    return _tool_cancelled
+
+
 @tool
 class RunShell(Tool):
     name = "run_shell"

@@ -78,8 +78,8 @@ class StrReplaceFile(Tool):
         if old not in text:
             return f"错误：在 {path} 中未找到要替换的字符串"
         if replace_all:
+            count = text.count(old)
             text = text.replace(old, new)
-            count = text.count(new) - target.read_text(encoding="utf-8").count(new) + 1
         else:
             text = text.replace(old, new, 1)
             count = 1
@@ -217,6 +217,11 @@ class EditFile(Tool):
             old = info["old"]
             new = info["new"]
             pos = text.find(old)
+            if pos == -1:
+                return (
+                    f"错误：第 {info['idx'] + 1} 个编辑块与前序编辑块冲突"
+                    "（old_string 已被前面的替换覆盖）。文件未修改，请拆分后重试。"
+                )
             line_start = text[:pos].count("\n") + 1
             line_end = line_start + old.count("\n")
             new_line_end = line_start + new.count("\n")

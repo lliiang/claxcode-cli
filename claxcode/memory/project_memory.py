@@ -145,30 +145,6 @@ class ProjectMemory:
                 for m in memories
             ]
 
-    async def delete_project(self, project_path: str) -> bool:
-        """删除项目记忆.
-
-        Args:
-            project_path: 项目路径
-
-        Returns:
-            是否成功删除
-        """
-        project_path = str(Path(project_path).resolve())
-
-        async for db in get_db_session():
-            db: AsyncSession
-            result = await db.execute(
-                select(ProjectMemoryORM).where(ProjectMemoryORM.project_path == project_path)
-            )
-            memory = result.scalar_one_or_none()
-
-            if memory:
-                await db.delete(memory)
-                await db.commit()
-                return True
-            return False
-
     def generate_context_md(self, config: dict[str, Any]) -> str:
         """生成 CLAUDE.md 文件内容.
 
@@ -202,31 +178,6 @@ class ProjectMemory:
             config.get('notes', ''),
         ]
         return "\n".join(lines)
-
-    async def get_or_create_context_file(self, project_path: str) -> Path | None:
-        """获取或创建项目上下文文件.
-
-        Args:
-            project_path: 项目路径
-
-        Returns:
-            上下文文件路径
-        """
-        project_path = Path(project_path).resolve()
-        context_file = project_path / "CLAUDE.md"
-
-        # 检查是否已存在
-        if context_file.exists():
-            return context_file
-
-        # 从数据库获取配置
-        memory = await self.get_project(str(project_path))
-        if memory and memory.get("config"):
-            content = self.generate_context_md(memory["config"])
-            context_file.write_text(content, encoding="utf-8")
-            return context_file
-
-        return None
 
 
 # 全局实例

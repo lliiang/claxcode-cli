@@ -23,6 +23,13 @@ class ContextManager:
         self.messages.append({"role": role, "content": content})
         self._maybe_compress()
 
+    def add_user_content(self, text: str, images: list[dict[str, Any]]) -> None:
+        """Add a user message with text + image content parts (multimodal)."""
+        self.messages.append(
+            {"role": "user", "content": [{"type": "text", "text": text}, *images]}
+        )
+        self._maybe_compress()
+
     def add_tool_result(self, tool_call_id: str, name: str, output: str) -> None:
         """Add a tool result message (OpenAI format)."""
         self.messages.append(

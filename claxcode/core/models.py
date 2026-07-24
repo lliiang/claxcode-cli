@@ -47,6 +47,41 @@ class DummyProvider(LLMProvider):
             yield "[DummyProvider] 未配置 LLM。请设置 LLM_PROVIDER 和 LLM_API_KEY。"
 
 
+def _to_anthropic_content(content: Any) -> Any:
+    """Convert OpenAI-format content (str or parts) to Anthropic format."""
+    if not isinstance(content, list):
+        return content
+    parts = []
+    for part in content:
+        if part.get("type") == "text":
+            parts.append({"type": "text", "text": part.get("text", "")})
+        elif part.get("type") == "image_url":
+            header, _, b64 = part["image_url"]["url"].partition(",")
+            media = header.removeprefix("data:").removesuffix(";base64")
+            parts.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media, "data": b64},
+            })
+    return parts
+
+
+def _to_ollama_message(msg: dict[str, Any]) -> dict[str, Any]:
+    """Convert OpenAI-format content parts to Ollama's content + images format."""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return msg
+    texts, images = [], []
+    for part in content:
+        if part.get("type") == "text":
+            texts.append(part.get("text", ""))
+        elif part.get("type") == "image_url":
+            images.append(part["image_url"]["url"].partition(",")[2])
+    out = {**msg, "content": "\n".join(texts)}
+    if images:
+        out["images"] = images
+    return out
+
+
 class OpenAIProvider(LLMProvider):
     """OpenAI-compatible API provider using httpx (no openai package required)."""
 
@@ -156,9 +191,11 @@ class AnthropicProvider(LLMProvider):
         anthropic_messages = []
         for m in messages:
             if m["role"] == "system":
-                system = m["content"]
+                system = m["content"] if isinstance(m["content"], str) else ""
             else:
-                anthropic_messages.append({"role": m["role"], "content": m["content"]})
+                anthropic_messages.append(
+                    {"role": m["role"], "content": _to_anthropic_content(m["content"])}
+                )
 
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -233,7 +270,7 @@ class OllamaProvider(LLMProvider):
         url = f"{self.base_url.rstrip('/')}/api/chat"
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": [_to_ollama_message(m) for m in messages],
             "stream": True,
             "options": {
                 "temperature": self.temperature,

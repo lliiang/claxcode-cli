@@ -60,3 +60,22 @@ async def test_admin_add_tool_runtime_error():
     assert broken_tool is not None
     output = await broken_tool.execute()
     assert "出错" in output
+
+
+@pytest.mark.asyncio
+async def test_admin_tool_can_use_common_builtins():
+    tool = AdminAddTool()
+    result = await tool.execute(
+        name="sort_words",
+        description="Sort words.",
+        code='''words = kwargs.get("words", [])
+if not all(isinstance(w, str) for w in words):
+    return "bad"
+return ",".join(sorted(words))
+''',
+    )
+    assert "已成功注册" in result
+    sort_tool = registry.get("sort_words")
+    assert sort_tool is not None
+    output = await sort_tool.execute(words=["b", "a", "c"])
+    assert output == "a,b,c"
