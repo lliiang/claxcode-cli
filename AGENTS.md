@@ -36,7 +36,7 @@ ClaxCode 是一个用 Python 编写的开源、自托管 Agentic 编程助手，
 | `CLAUDE.md` | 注入 Agent 的项目上下文；当前是 `/init` 生成的基本模板 |
 | `.claxcode/` | 本地运行时状态：数据库、快照、审计日志、CLI 会话指针等，不应提交 |
 
-仓库没有 `package.json`、锁文件、Makefile、Dockerfile、CI 配置或独立部署配置。
+仓库没有 `package.json`、锁文件、Makefile 或 Dockerfile。`.github/workflows/publish.yml` 提供 PyPI 发布 CI：推送 `v*` 标签或手动触发，运行测试和构建后通过 OIDC 发布，使用 GitHub 环境 `pypi`。
 
 ## 安装、构建与运行
 
@@ -275,7 +275,7 @@ pytest tests/test_tools/test_file_operations.py -k write
 
 ## 部署与已知限制
 
-- 当前部署方式就是本地 editable 安装后用 console script 启动 Uvicorn 或 CLI；没有容器、CI、进程管理或生产部署工具。
+- 应用部署仍是本地 editable 安装后用 console script 启动 Uvicorn 或 CLI；没有容器、进程管理或生产部署工具。PyPI 发布由 GitHub Actions 负责。
 - 数据库仅自动建表，没有 Alembic 等迁移机制；修改 ORM 时需考虑既有本地数据库。
 - MCP 和插件系统仍是 stub，不能当作已可用能力。
 - 无视觉输入、无 `/resume` 会话选择器；CLI 只自动恢复项目最近一次会话。

@@ -282,12 +282,23 @@ mypy claxcode
 
 静态检查目前仍有历史存量告警；贡献代码至少不应新增告警。架构与扩展细节见 [AGENTS.md](AGENTS.md)。
 
-发布包检查：
+### 发布到 PyPI
+
+本地检查发布包：
 
 ```bash
 python -m build
 python -m twine check dist/*
 ```
+
+仓库使用 `.github/workflows/publish.yml` 自动发布：推送 `v*` 标签，或在 GitHub Actions 中手动运行 **Publish to PyPI**。工作流会依次运行测试、构建和包检查，然后通过 OpenID Connect 发布，无需保存 PyPI Token。
+
+发布前需要：
+
+1. 更新 `pyproject.toml` 中的版本号并提交。
+2. 在 PyPI 配置 Trusted Publisher：项目 `claxcode`、所有者 `lliiang`、仓库 `claxcode-cli`、工作流 `publish.yml`、环境 `pypi`。
+3. 在 GitHub `Settings → Environments` 创建 `pypi` 环境。
+4. 推送版本标签，例如 `git tag v0.2.0 && git push origin v0.2.0`。
 
 ## 常见问题
 
