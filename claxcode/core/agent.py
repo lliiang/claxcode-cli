@@ -175,6 +175,7 @@ class Agent:
                 }
 
             content_buffer = ""
+            reasoning_buffer = ""
             pending_tool_calls: list[dict] = []
 
             async for chunk in self.provider.stream_chat(
@@ -184,6 +185,8 @@ class Agent:
                 if isinstance(chunk, str):
                     content_buffer += chunk
                     yield {"type": "message_delta", "content": chunk}
+                elif isinstance(chunk, dict) and chunk.get("type") == "reasoning_delta":
+                    reasoning_buffer += chunk["content"]
                 elif isinstance(chunk, dict) and chunk.get("type") == "tool_call":
                     pending_tool_calls.append(chunk)
                     yield {
@@ -194,7 +197,7 @@ class Agent:
 
             if not pending_tool_calls:
                 # Assistant finished without tools
-                self.context.add_message("assistant", content_buffer)
+                self.context.add_message("assistant", content_buffer, reasoning_buffer)
                 if self.debug:
                     yield {
                         "type": "debug",
@@ -217,7 +220,7 @@ class Agent:
                         },
                     }
                 )
-            self.context.add_assistant_tool_calls(assistant_tool_calls)
+            self.context.add_assistant_tool_calls(assistant_tool_calls, reasoning_buffer)
 
             if self.debug:
                 yield {

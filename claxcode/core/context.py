@@ -19,8 +19,11 @@ class ContextManager:
         if system_prompt:
             self.messages.append({"role": "system", "content": system_prompt})
 
-    def add_message(self, role: str, content: str) -> None:
-        self.messages.append({"role": role, "content": content})
+    def add_message(self, role: str, content: str, reasoning_content: str = "") -> None:
+        message = {"role": role, "content": content}
+        if reasoning_content:
+            message["reasoning_content"] = reasoning_content
+        self.messages.append(message)
         self._maybe_compress()
 
     def add_tool_result(self, tool_call_id: str, name: str, output: str) -> None:
@@ -34,14 +37,17 @@ class ContextManager:
         )
         self._maybe_compress()
 
-    def add_assistant_tool_calls(self, tool_calls: list[dict[str, Any]]) -> None:
-        self.messages.append(
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": tool_calls,
-            }
-        )
+    def add_assistant_tool_calls(
+        self, tool_calls: list[dict[str, Any]], reasoning_content: str = ""
+    ) -> None:
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": tool_calls,
+        }
+        if reasoning_content:
+            message["reasoning_content"] = reasoning_content
+        self.messages.append(message)
         self._maybe_compress()
 
     def get_messages(self) -> list[dict[str, Any]]:

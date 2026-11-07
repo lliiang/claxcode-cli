@@ -4,7 +4,7 @@
 
 ClaxCode is an open-source agentic coding assistant for the terminal, inspired by Claude Code. It supports OpenAI-compatible providers, Anthropic, Ollama and custom HTTP APIs, with local sessions, memories, file snapshots and audit logs.
 
-当前版本：`0.1.1`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
+当前版本：`0.1.2`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
 
 ## 核心特性
 
@@ -15,7 +15,7 @@ ClaxCode is an open-source agentic coding assistant for the terminal, inspired b
 - **分层记忆**：会话恢复、全局用户偏好、项目滚动摘要、项目/全局长期记忆。
 - **可扩展**：Skills、Shell Hooks、子代理和自动发现工具。
 - **双前端**：交互式 CLI + FastAPI SSE 服务，支持非交互式脚本调用。
-- **200 个自动化测试**：测试不需要真实 LLM 密钥或公网。
+- **205 个自动化测试**：测试不需要真实 LLM 密钥或公网。
 
 ## 安装
 
@@ -82,7 +82,13 @@ LLM_MAX_TOKENS=4096
 | Provider | `LLM_PROVIDER` | 说明 |
 |---|---|---|
 | OpenAI | `openai` | OpenAI API |
-| OpenAI 兼容 | `generic_openai` | DeepSeek、DashScope、vLLM、LM Studio 等兼容端点 |
+| OpenAI 兼容 | `generic_openai` | 其他 OpenAI 兼容端点 |
+| DeepSeek | `deepseek` | 默认接口 `https://api.deepseek.com`，支持推理内容回传 |
+| 阿里百炼 | `dashscope` | 阿里云百炼兼容模式 |
+| 智谱 | `zhipu` | 智谱开放平台 |
+| 月之暗面 | `moonshot` | Moonshot API |
+| 火山方舟 | `volcengine` | 火山引擎方舟 |
+| 硅基流动 | `siliconflow` | SiliconFlow API |
 | Anthropic | `anthropic` | 需要 `anthropic` extra |
 | Ollama | `ollama` | 本地模型，可通过 `LLM_CUSTOM_CONFIG` 设置 Ollama 选项 |
 | 自定义 HTTP | `custom_http` | 使用请求模板与响应解析器适配其他 API |

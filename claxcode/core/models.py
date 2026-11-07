@@ -9,6 +9,23 @@ import httpx
 
 from claxcode.config import settings
 
+PROVIDER_BASE_URLS = {
+    "deepseek": "https://api.deepseek.com",
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "moonshot": "https://api.moonshot.cn",
+    "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
+    "siliconflow": "https://api.siliconflow.cn",
+}
+
+
+def _chat_completions_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    version = base.rsplit("/", 1)[-1]
+    if len(version) > 1 and version.startswith("v") and version[1:].isdigit():
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
+
 
 class ToolCallChunk:
     def __init__(self):
@@ -50,9 +67,10 @@ class DummyProvider(LLMProvider):
 class OpenAIProvider(LLMProvider):
     """OpenAI-compatible API provider using httpx (no openai package required)."""
 
-    def __init__(self):
+    def __init__(self, default_base_url: str | None = None):
         self.api_key = settings.llm_api_key or "sk-test"
-        self.base_url = (settings.llm_base_url or "https://api.openai.com").rstrip("/")
+        default_base_url = default_base_url or "https://api.openai.com"
+        self.base_url = (settings.llm_base_url or default_base_url).rstrip("/")
         self.model = settings.llm_model
         self.temperature = settings.llm_temperature
         self.max_tokens = settings.llm_max_tokens
@@ -62,7 +80,7 @@ class OpenAIProvider(LLMProvider):
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
-        url = f"{self.base_url}/v1/chat/completions"
+        url = _chat_completions_url(self.base_url)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -86,7 +104,7 @@ class OpenAIProvider(LLMProvider):
                     body = await response.aread()
                     print(f"[LLM ERROR {response.status_code}] {body.decode('utf-8', errors='replace')}")
                 response.raise_for_status()
-                current_tool: ToolCallChunk | None = None
+                current_tools: dict[int, ToolCallChunk] = {}
 
                 async for line in response.aiter_lines():
                     if not line:
@@ -104,38 +122,38 @@ class OpenAIProvider(LLMProvider):
                     content = delta.get("content", "")
                     if content:
                         yield content
+                    reasoning = delta.get("reasoning_content", "")
+                    if reasoning:
+                        yield {"type": "reasoning_delta", "content": reasoning}
 
-                    # Tool calls
-                    tcs = delta.get("tool_calls", [])
-                    for tc in tcs:
+                    for tc in delta.get("tool_calls", []):
+                        index = tc.get("index", 0)
+                        current_tool = current_tools.setdefault(index, ToolCallChunk())
                         if tc.get("id"):
-                            if current_tool is None:
-                                current_tool = ToolCallChunk()
                             current_tool.id = tc["id"]
                         func = tc.get("function", {})
                         if func.get("name"):
-                            if current_tool is None:
-                                current_tool = ToolCallChunk()
                             current_tool.name = func["name"]
                         if func.get("arguments"):
-                            if current_tool is None:
-                                current_tool = ToolCallChunk()
                             current_tool.arguments += func["arguments"]
 
                     finish_reason = data.get("choices", [{}])[0].get("finish_reason")
-                    if finish_reason and current_tool and current_tool.name:
-                        try:
-                            args = json.loads(current_tool.arguments or "{}")
-                        except json.JSONDecodeError:
-                            # Some providers return malformed JSON; fall back to raw string
-                            args = {"_raw": current_tool.arguments}
-                        yield {
-                            "type": "tool_call",
-                            "id": current_tool.id,
-                            "name": current_tool.name,
-                            "arguments": args,
-                        }
-                        current_tool = None
+                    if finish_reason:
+                        for index in sorted(current_tools):
+                            current_tool = current_tools[index]
+                            if not current_tool.name:
+                                continue
+                            try:
+                                args = json.loads(current_tool.arguments or "{}")
+                            except json.JSONDecodeError:
+                                args = {"_raw": current_tool.arguments}
+                            yield {
+                                "type": "tool_call",
+                                "id": current_tool.id,
+                                "name": current_tool.name,
+                                "arguments": args,
+                            }
+                        current_tools.clear()
 
 
 class AnthropicProvider(LLMProvider):
@@ -426,6 +444,8 @@ def get_provider() -> LLMProvider:
         return _CUSTOM_PROVIDERS[provider]()
     if provider == "openai":
         return OpenAIProvider()
+    if provider in PROVIDER_BASE_URLS:
+        return GenericOpenAIProvider(default_base_url=PROVIDER_BASE_URLS[provider])
     if provider == "anthropic":
         try:
             return AnthropicProvider()
@@ -440,7 +460,8 @@ def get_provider() -> LLMProvider:
         return OllamaProvider()
     if provider == "custom_http":
         return CustomHTTPProvider()
-    return DummyProvider(
-        reason=f"未知的提供商 '{provider}'. "
-        "支持的提供商: openai, anthropic, generic_openai, ollama, custom_http。"
-    )
+    supported = [
+        "openai", "anthropic", "generic_openai", "ollama", "custom_http",
+        *PROVIDER_BASE_URLS,
+    ]
+    return DummyProvider(reason=f"未知的提供商 '{provider}'。支持: {', '.join(supported)}。")

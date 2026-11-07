@@ -41,6 +41,7 @@ import claxcode.tools  # noqa: F401
 from claxcode.config import settings
 from claxcode.core.agent import Agent
 from claxcode.core.checkpoint import CheckpointManager
+from claxcode.core.models import PROVIDER_BASE_URLS
 from claxcode.extensions.skills import SkillManager
 from claxcode.memory import (
     init_db,
@@ -291,6 +292,9 @@ class InteractiveCLI:
             # 给工具一些时间来响应取消
             await asyncio.sleep(0.5)
             print("📝 当前操作已中止。您可以继续输入新的指令。\n")
+        except Exception as exc:
+            print(f"\n❌ 本轮执行失败: {exc}")
+            print("请检查模型配置或稍后重试；您可以继续输入。\n")
         finally:
             await self._persist_session()
 
@@ -460,7 +464,10 @@ class InteractiveCLI:
     async def _init_global_config(self) -> None:
         """Interactively create the user-global model configuration."""
         config_file = Path.home() / ".claxcode" / ".env"
-        providers = {"openai", "anthropic", "generic_openai", "ollama", "custom_http"}
+        providers = {
+            "openai", "anthropic", "generic_openai", "ollama", "custom_http",
+            *PROVIDER_BASE_URLS,
+        }
         try:
             if config_file.exists():
                 answer = await self._read_input("⚠️ 全局配置已存在，覆盖? [y/N] ")
@@ -471,9 +478,13 @@ class InteractiveCLI:
                 await self._read_input(f"模型提供商 [{settings.llm_provider}]: ")
             ).strip() or settings.llm_provider
             model = (await self._read_input(f"模型名称 [{settings.llm_model}]: ")).strip()
+            current_base_url = (
+                settings.llm_base_url if provider == settings.llm_provider else ""
+            )
+            default_base_url = current_base_url or PROVIDER_BASE_URLS.get(provider, "")
             base_url = (
-                await self._read_input(f"接口地址 [{settings.llm_base_url or '默认'}]: ")
-            ).strip()
+                await self._read_input(f"接口地址 [{default_base_url or '默认'}]: ")
+            ).strip() or default_base_url
             api_key = await self._read_input("API 密钥（可留空）: ", is_password=True)
         except (EOFError, KeyboardInterrupt):
             print("\n已取消全局配置。\n")

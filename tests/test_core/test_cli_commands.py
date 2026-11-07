@@ -451,3 +451,38 @@ def test_root_init_subcommand_starts_global_config(monkeypatch):
     monkeypatch.setattr("sys.argv", ["claxcode-cli", "init"])
     main()
     assert called == [True]
+
+
+async def test_chat_model_error_returns_control(tmp_path, monkeypatch, capsys):
+    class BrokenAgent:
+        async def run(self, message):
+            raise RuntimeError("HTTP 400")
+            if False:
+                yield {}
+
+    cli = InteractiveCLI(str(tmp_path))
+    cli.agent = BrokenAgent()
+
+    async def no_persist():
+        return None
+
+    monkeypatch.setattr(cli, "_persist_session", no_persist)
+    await cli._chat("你好")
+    out = capsys.readouterr().out
+    assert "本轮执行失败: HTTP 400" in out
+    assert "继续输入" in out
+
+
+async def test_config_init_uses_domestic_provider_url(tmp_path, monkeypatch):
+    cli = InteractiveCLI(str(tmp_path))
+    monkeypatch.setattr("claxcode.cli.Path.home", classmethod(lambda cls: tmp_path))
+    answers = iter(["deepseek", "deepseek-chat", "", "dummy-key"])
+
+    async def fake_input(prompt, is_password=False):
+        return next(answers)
+
+    monkeypatch.setattr(cli, "_read_input", fake_input)
+    await cli._init_global_config()
+    content = (tmp_path / ".claxcode" / ".env").read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=deepseek" in content
+    assert "LLM_BASE_URL=https://api.deepseek.com" in content

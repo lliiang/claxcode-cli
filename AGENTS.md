@@ -163,7 +163,8 @@ tests/                      # 按 api/core/tools/memory/security/extensions 分�
 `claxcode/core/models.py` 定义 `LLMProvider.stream_chat(messages, tools)`，以异步迭代器产生文本块或工具调用字典。`get_provider()` 支持：
 
 - `openai`：OpenAI API，httpx 实现。
-- `generic_openai`：vLLM、LM Studio、DashScope 等 OpenAI 兼容端点。
+- `generic_openai`：vLLM、LM Studio 等 OpenAI 兼容端点。
+- `deepseek`、`dashscope`、`zhipu`、`moonshot`、`volcengine`、`siliconflow`：国内供应商预设，复用 OpenAI 兼容 Provider 并自动选择默认端点；OpenAI 流式解析按工具索引拆分调用，并保存、回传 `reasoning_content`。
 - `anthropic`：Anthropic SDK；未安装依赖时退回 `DummyProvider`。
 - `ollama`：原生 `/api/chat`，`LLM_CUSTOM_CONFIG` 可传 `ollama_options`。
 - `custom_http`：通过 `request_template` 和 `response_parser` 适配自定义流式 HTTP API。
@@ -249,7 +250,7 @@ pytest tests/test_tools/test_file_operations.py -k write
 - 测试目录按被测模块分组。新工具、Provider、权限或扩展功能应在相邻测试目录添加同风格测试。
 - 使用 `monkeypatch`、临时目录和假 Provider/会话隔离外部依赖；`pytest-httpx` 可用于出站 HTTP mock。测试不得要求真实 LLM 密钥或公网。
 - 浏览器集成测试只使用本地 `data:` URL；Playwright/Chromium 不可用时跳过。
-- 本次实际验证结果：**200 个测试全部通过**（`200 passed in 8.87s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
+- 本次实际验证结果：**205 个测试全部通过**（`205 passed in 9.26s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
 
 ## 安全注意事项
 
