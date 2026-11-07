@@ -23,13 +23,6 @@ class ContextManager:
         self.messages.append({"role": role, "content": content})
         self._maybe_compress()
 
-    def add_user_content(self, text: str, images: list[dict[str, Any]]) -> None:
-        """Add a user message with text + image content parts (multimodal)."""
-        self.messages.append(
-            {"role": "user", "content": [{"type": "text", "text": text}, *images]}
-        )
-        self._maybe_compress()
-
     def add_tool_result(self, tool_call_id: str, name: str, output: str) -> None:
         """Add a tool result message (OpenAI format)."""
         self.messages.append(
@@ -85,10 +78,28 @@ class ContextManager:
 
         Leading tool results are dropped — without their assistant tool call
         (e.g. lost to compression in a previous session) providers reject them.
+        Trailing assistant tool_calls without matching tool results are also
+        dropped, e.g. when a previous run crashed between tool_calls and results.
         """
         self.messages.extend(messages)
         while len(self.messages) > 1 and self.messages[1].get("role") == "tool":
             self.messages.pop(1)
+
+        i = 1
+        while i < len(self.messages):
+            msg = self.messages[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                needed = {tc["id"] for tc in msg["tool_calls"]}
+                j = i + 1
+                found: set[str] = set()
+                while j < len(self.messages) and self.messages[j].get("role") == "tool":
+                    found.add(self.messages[j].get("tool_call_id"))
+                    j += 1
+                if needed != found:
+                    # Drop the orphan assistant and any trailing tool messages.
+                    del self.messages[i:j]
+                    continue
+            i += 1
 
     def _maybe_compress(self) -> None:
         """Emergency fallback: hard-drop oldest messages while over the threshold."""

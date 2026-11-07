@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     # Browser
     browser_headless: bool = True  # headless mode for Playwright browser tools
 
-    # Vision (multimodal): attach images to conversations as content parts
-    llm_vision: bool = True
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

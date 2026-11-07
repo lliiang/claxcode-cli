@@ -59,6 +59,8 @@ class CheckpointManager:
 
     def list_snapshots(self, session_id: UUID, limit: int = 10) -> list[dict[str, Any]]:
         """Most recent snapshot batches, newest first."""
+        if limit < 1:
+            return []
         session_dir = self.base_dir / str(session_id)
         if not session_dir.exists():
             return []

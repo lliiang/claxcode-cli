@@ -16,7 +16,7 @@ from claxcode.memory.auto_memory import auto_memory
 from claxcode.memory.project_context import load_project_context
 from claxcode.security.audit import audit_logger
 from claxcode.security.permissions import PermissionMode, check_permission
-from claxcode.tools.base import Tool, drain_images
+from claxcode.tools.base import Tool
 from claxcode.tools.execution import clear_tool_cancelled
 from claxcode.tools.registry import registry
 
@@ -45,7 +45,7 @@ class Agent:
         approval_callback: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None,
     ):
         self.session_id = session_id
-        self.project_path = Path(project_path)
+        self.project_path = Path(project_path).resolve()
         self.permission_mode = permission_mode
         self.approval_callback = approval_callback
         self.debug = settings.debug if debug is None else debug
@@ -70,55 +70,76 @@ class Agent:
             skill_manager = SkillManager()
             skill_manager.load_defaults(self.project_path)
 
+        self._system_prompt_before_skills = system
         skills_fragment = skill_manager.to_prompt_fragment()
         if skills_fragment:
             system += f"\n\n{skills_fragment}"
 
-        auto_fragment = auto_memory.to_prompt_fragment()
-        if auto_fragment:
-            system += f"\n\n{auto_fragment}"
-
+        self._base_system_prompt = system
         self.context = ContextManager(system_prompt=system)
-        self._memory_loaded = False
 
-    async def _load_memories(self) -> None:
-        """将项目记忆和相关长期记忆注入到上下文中。"""
+    def update_skills(self, skill_manager: SkillManager) -> None:
+        """Replace the skill fragment while preserving dynamically loaded memories."""
+        memory_suffix = self.context.system_prompt.removeprefix(self._base_system_prompt)
+        system = self._system_prompt_before_skills
+        skills_fragment = skill_manager.to_prompt_fragment()
+        if skills_fragment:
+            system += f"\n\n{skills_fragment}"
+        self._base_system_prompt = system
+        self.context.system_prompt = system + memory_suffix
+        if self.context.messages and self.context.messages[0].get("role") == "system":
+            self.context.messages[0]["content"] = self.context.system_prompt
+
+    async def _load_memories(self, user_message: str) -> None:
+        """Refresh scoped memories for each user message without duplicating them."""
         from claxcode.memory import long_term_memory, project_memory
 
+        auto_fragment = auto_memory.to_prompt_fragment()
+        auto_prompt = f"\n\n{auto_fragment}" if auto_fragment else ""
+        fragments: list[str] = []
+        project_summary = ""
         try:
             project = await project_memory.get_project(str(self.project_path))
-            if project and project.get("context_summary"):
-                memory_text = f"\n\n# 项目记忆\n{project['context_summary']}"
-                self.context.system_prompt += memory_text
-                if self.context.messages and self.context.messages[0].get("role") == "system":
-                    self.context.messages[0]["content"] = self.context.system_prompt
+            if project:
+                project_summary = project.get("context_summary", "").strip()
+            if project_summary:
+                fragments.append(
+                    f"\n# 项目滚动摘要（历史状态，需结合当前代码验证）\n{project_summary}"
+                )
 
             memories = await long_term_memory.search(
-                project_path=str(self.project_path), limit=3
+                keywords=[user_message],
+                project_path=str(self.project_path),
+                include_global=True,
+                limit=3,
             )
-            if memories:
-                lines = ["\n# 相关历史记忆"]
-                for m in memories:
-                    lines.append(f"- {m['compressed_content'][:150]}")
-                memory_text = "\n".join(lines)
-                self.context.system_prompt += memory_text
-                if self.context.messages and self.context.messages[0].get("role") == "system":
-                    self.context.messages[0]["content"] = self.context.system_prompt
+            if not memories:
+                memories = await long_term_memory.search(
+                    project_path=str(self.project_path), include_global=True, limit=2
+                )
+            lines = ["\n# 相关长期记忆（仅作历史参考，当前指令优先）"]
+            for memory in memories:
+                content = memory["compressed_content"].strip()
+                if not content or content == project_summary:
+                    continue
+                scope = "全局" if not memory["project_path"] else "项目"
+                lines.append(f"- [{scope}] {content[:400]}")
+            if len(lines) > 1:
+                fragments.append("\n".join(lines))
         except Exception:
-            pass  # 记忆加载失败不应阻塞主流程
+            fragments = []  # 长期记忆加载失败不应阻塞主流程或全局偏好
 
-    async def run(self, user_message: str, images: list[dict] | None = None) -> AsyncIterator[dict]:
+        self.context.system_prompt = self._base_system_prompt + auto_prompt + "".join(fragments)
+        if self.context.messages and self.context.messages[0].get("role") == "system":
+            self.context.messages[0]["content"] = self.context.system_prompt
+
+    async def run(self, user_message: str) -> AsyncIterator[dict]:
         """Stream agent events."""
         clear_tool_cancelled()
-        if not self._memory_loaded:
-            await self._load_memories()
-            self._memory_loaded = True
+        await self._load_memories(user_message)
 
         yield {"type": "thinking", "content": "正在收集上下文..."}
-        if images:
-            self.context.add_user_content(user_message, images)
-        else:
-            self.context.add_message("user", user_message)
+        self.context.add_message("user", user_message)
 
         for iteration in range(self.max_iterations):
             # Prepare available tools
@@ -213,10 +234,6 @@ class Agent:
                 result = await self._execute_tool(name, args)
                 yield {"type": "tool_result", "name": name, "output": result}
                 self.context.add_tool_result(tc["id"], name, result)
-
-                # 工具附带的图片（如浏览器截图）作为视觉内容注入对话
-                for image_part in drain_images():
-                    self.context.add_user_content(f"[{name} 附加的图片]", [image_part])
 
                 if self.debug:
                     yield {

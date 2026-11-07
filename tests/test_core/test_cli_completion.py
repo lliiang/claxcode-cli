@@ -85,3 +85,47 @@ def test_skill_commands_included(project):
     completer = CliCompleter(project, lambda: cli_commands + skill_commands)
     results = _completions(completer, "/ref")
     assert results == ["/refactor_file"]
+
+
+def test_mode_argument_completion(project):
+    completer = CliCompleter(project, list)
+    assert _completions(completer, "/mode auto_e") == ["auto_edit"]
+    assert _completions(completer, "/mode ask ") == []
+
+
+def test_subcommand_completion(project):
+    completer = CliCompleter(project, list)
+    results = _completions(completer, "/memory ")
+    assert "overview" in results
+    assert "learn" in results
+    assert "forget" in results
+    assert _completions(completer, "/config ") == []
+
+
+def test_quoted_file_completion_supports_spaces_and_chinese(project):
+    (project / "docs").mkdir()
+    (project / "docs" / "设计 说明.md").write_text("x")
+    completer = CliCompleter(project, list)
+    doc = Document('分析@"设计 说', len('分析@"设计 说'))
+    completions = list(completer.get_completions(doc, None))
+    assert [c.text for c in completions] == ['docs/设计 说明.md"']
+    assert completions[0].start_position == -len("设计 说")
+
+
+def test_completion_after_chinese_text_but_not_email(project):
+    completer = CliCompleter(project, list)
+    assert "src/core/agent.py" in _completions(completer, "分析@agent")
+    assert _completions(completer, "user@agent") == []
+
+
+def test_file_completion_skips_unsupported_images(project):
+    (project / "shot.png").write_bytes(b"fake")
+    completer = CliCompleter(project, list)
+    assert "shot.png" not in _completions(completer, "@shot")
+
+
+def test_basename_match_ranks_before_subsequence(project):
+    (project / "src" / "agent_utils.py").write_text("x")
+    completer = CliCompleter(project, list)
+    results = _completions(completer, "@agent")
+    assert results[0] == "src/core/agent.py"

@@ -11,8 +11,8 @@ from claxcode.tools.registry import tool
 class RememberFactTool(Tool):
     name = "remember_fact"
     description = (
-        "记录一条用户偏好或重要事实到自动记忆（键值对），"
-        "以后的会话会自动加载。例如用户偏好的语言、代码风格、常用命令等。"
+        "记录一条稳定的全局用户偏好或事实到自动记忆（键值对），"
+        "以后的会话会自动加载。例如用户偏好的语言和通用回答风格。"
     )
     input_schema = {
         "type": "object",

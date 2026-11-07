@@ -35,6 +35,8 @@ class AuditLogger:
 
     def read_recent(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return the most recent entries (newest last)."""
+        if limit < 1:
+            return []
         if not self._log_path.exists():
             return []
         lines = self._log_path.read_text(encoding="utf-8").splitlines()

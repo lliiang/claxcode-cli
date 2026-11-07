@@ -1,122 +1,227 @@
 # ClaxCode
 
-> 开源、自托管的终端 AI 编程助手 —— 类 Claude Code 的 Agentic 体验，接入任意 LLM，数据不出本机。
+> 开源、自托管的终端 AI 编程助手：接入你选择的模型，在终端中完成代码阅读、编辑、测试与调试。
 
-**English**: ClaxCode is an open-source, self-hosted agentic coding assistant inspired by Claude Code. It runs in your terminal (plus a FastAPI/SSE server), works with any LLM (OpenAI, Anthropic, Ollama, any OpenAI-compatible or custom HTTP API), and keeps all data on your machine. Features an agentic loop, 35 built-in tools, layered permission modes with interactive approval, file snapshots with rollback, shell hooks, a six-layer skill system, persistent memory, subagents, and a headless mode for scripting.
+ClaxCode is an open-source agentic coding assistant for the terminal, inspired by Claude Code. It supports OpenAI-compatible providers, Anthropic, Ollama and custom HTTP APIs, with local sessions, memories, file snapshots and audit logs.
 
-## 为什么选择 ClaxCode
+当前版本：`0.1.0`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
 
-- 🔌 **任意模型** — OpenAI / Anthropic / Ollama / vLLM / DashScope / 自定义 HTTP 模板，甚至代码注册自己的 Provider
-- 🧠 **真 Agentic Loop** — 收集上下文 → 思考（流式）→ 调用工具 → 验证，最多 10 轮自主迭代
-- 🛡️ **安全分层** — 5 级权限模式 + 逐项审批 + 编辑前快照 + 一键回滚 + 全程审计日志
-- 🧩 **高度可扩展** — Skills 六层加载、Shell Hooks、子代理、35 个内置工具
-- 💾 **有记忆** — 会话断点续聊、LLM 摘要压缩、长期记忆、自动记忆偏好
-- 🖥️ **双前端** — 交互式 CLI（REPL）+ FastAPI SSE 流式服务
-- ✅ **138 个自动化测试**，ruff/mypy 受控
+## 核心特性
 
-## 快速开始
+- **Agentic 工作流**：理解上下文、流式生成、调用工具、验证结果，最多自主迭代 10 轮。
+- **模型自由选择**：OpenAI、OpenAI 兼容服务、Anthropic、Ollama、自定义 HTTP API。
+- **终端原生体验**：`@` 文件模糊补全、命令与参数补全、中文路径、历史建议、多行输入。
+- **权限与回滚**：5 种权限模式、逐项审批、编辑前快照、回滚和审计日志。
+- **分层记忆**：会话恢复、全局用户偏好、项目滚动摘要、项目/全局长期记忆。
+- **可扩展**：Skills、Shell Hooks、子代理和自动发现工具。
+- **双前端**：交互式 CLI + FastAPI SSE 服务，支持非交互式脚本调用。
+- **200 个自动化测试**：测试不需要真实 LLM 密钥或公网。
+
+## 安装
+
+要求：**Python 3.11+**，支持 Windows、macOS 和 Linux。
+
+### 从 PyPI 安装
 
 ```bash
-# 安装（Python >= 3.11）
-git clone <repo-url> && cd ClaxCode
-python -m venv .venv && .\.venv\Scripts\activate   # Windows
-pip install -e ".[dev]"
-
-# 配置
-cp .env.example .env   # 填入你的 LLM_API_KEY 等
-
-# 启动交互式终端
-claxcode-cli
-
-# 单发模式（可脚本化）
-claxcode-cli --print "总结一下这个项目的结构"
+python -m pip install claxcode
 ```
 
-最小配置（`.env`）：
+### 从源码安装
+
+在源码目录中执行：
+
+```bash
+python -m venv .venv
+
+# Windows
+.\.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+
+python -m pip install -e ".[dev]"
+```
+
+可选能力：
+
+```bash
+python -m pip install "claxcode[anthropic]"  # Anthropic SDK
+python -m pip install "claxcode[browser]"    # 浏览器工具
+playwright install chromium                  # browser extra 安装后执行
+```
+
+## 首次配置
+
+直接运行根级初始化命令：
+
+```bash
+claxcode-cli init
+```
+
+按提示输入模型提供商、模型名称、接口地址和 API Key。API Key 使用隐藏输入；已有配置会先要求确认，不会直接覆盖。
+
+全局配置文件位置：
+
+- Windows：`%USERPROFILE%\.claxcode\.env`
+- macOS / Linux：`~/.claxcode/.env`
+
+配置示例：
 
 ```env
-LLM_PROVIDER=generic_openai      # openai | anthropic | generic_openai | ollama | custom_http
+LLM_PROVIDER=generic_openai
 LLM_API_KEY=your-api-key
 LLM_BASE_URL=https://your-endpoint/v1
 LLM_MODEL=your-model
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=4096
 ```
 
-## 三分钟上手
+支持的 Provider：
+
+| Provider | `LLM_PROVIDER` | 说明 |
+|---|---|---|
+| OpenAI | `openai` | OpenAI API |
+| OpenAI 兼容 | `generic_openai` | DeepSeek、DashScope、vLLM、LM Studio 等兼容端点 |
+| Anthropic | `anthropic` | 需要 `anthropic` extra |
+| Ollama | `ollama` | 本地模型，可通过 `LLM_CUSTOM_CONFIG` 设置 Ollama 选项 |
+| 自定义 HTTP | `custom_http` | 使用请求模板与响应解析器适配其他 API |
+
+配置覆盖优先级：
 
 ```text
-❯ 帮我重构 @claxcode/core/context.py，加上类型 hint        # @文件 内联文件内容
-❯ !git status                                               # ! 直接执行 shell
-❯ #用户偏好简洁的回答                                        # # 存入自动记忆
-❯ /mode auto_safe                                           # 切换权限模式
-❯ /rollback list                                            # 查看可回滚的编辑快照
+--env 指定文件 > 当前项目 .env > 用户全局 .env
 ```
 
-Agent 工作时的样子：
+修改配置后重启 CLI。进入交互界面后可用 `/config` 查看当前生效配置。
+
+> 不要把真实 API Key 提交到 Git。项目 `.env` 和用户全局配置都已设计为本地配置。
+
+## 开始使用
+
+```bash
+# 在当前目录启动交互式助手
+claxcode-cli
+
+# 指定项目与权限模式
+claxcode-cli --project /path/to/project --mode auto_safe
+
+# 单发模式，适合脚本调用
+claxcode-cli --print "总结一下这个项目的结构"
+
+# 查看版本
+claxcode-cli --version
+```
+
+交互示例：
 
 ```text
-💭 思考中... (步骤 1)
-🔧 调用工具: read_file({"path": "claxcode/core/context.py"})
-📋 结果: ...
-💭 正在验证结果...
-已为你完成重构：1) 补齐类型标注 2) ...
+❯ 帮我重构 @claxcode/core/context.py，并补充类型标注
+❯ 分析一下 @"docs/设计 说明.md"
+❯ !git status
+❯ #回答保持简洁，并优先给出可执行步骤
+❯ /mode auto_safe
+❯ /rollback list
 ```
 
-## 权限模式
+输入规则：
+
+- `@path`：引用项目内文本文件；支持模糊补全、中文路径和 `@"带 空格的路径"`。
+- `!command`：直接执行 Shell；Ctrl+C 中止并返回输入提示。
+- `#text`：保存一条全局自动记忆。
+- Enter 提交，Alt+Enter 换行；Ctrl+C 清空非空输入，空输入时退出。
+- `/` 补全内置命令、技能命令和常用参数。
+
+## 权限与安全
 
 | 模式 | 行为 |
 |---|---|
-| `ask`（默认） | 只读工具自动放行；写/执行逐项询问（`y` 允许 / `a` 本会话放行该工具 / `N` 拒绝） |
-| `plan` | 只读模式，阻断一切写/执行工具 |
-| `auto_safe` | 放行读和写，阻断命令执行 |
-| `auto_edit` | 全部放行 |
-| `yolo` | 全部放行（完全自动驾驶，慎用） |
+| `ask`（默认） | 只读工具自动放行；写入和执行逐项询问 |
+| `plan` | 只读规划，阻止写入和命令执行 |
+| `auto_safe` | 允许读写和 Web，阻止命令执行 |
+| `auto_edit` | 允许全部工具 |
+| `yolo` | 完全无沙箱，谨慎使用 |
 
-```bash
-claxcode-cli --mode plan        # 只读探索，绝不改文件
-claxcode-cli --mode auto_safe   # 可改代码，不跑命令
-```
+主 Agent 的写入工具会在执行前创建快照：
 
-安全机制：**每次写操作前自动快照**（`.claxcode/snapshots/`），`/rollback` 可回滚；所有工具调用（含被阻止的）写入 `.claxcode/audit.jsonl` 审计日志，`/audit` 随时查看。
+- `/rollback list`：查看快照。
+- `/rollback [n]`：确认后回滚最近 n 个快照。
+- `/audit [n]`：查看主 Agent 最近工具调用记录。
 
-## 斜杠命令
+本地会话、记忆、快照和审计数据默认保存在 `.claxcode/` 或用户目录。**发送给模型的提示、代码和文件内容会离开本机并传输至对应模型服务商**，请根据项目敏感程度选择 Provider。
 
-`/help` 由命令表自动生成，永不过时：
+API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接暴露到不可信网络；直接工具调用和 executor 子代理不经过主 Agent 的完整权限管线。
+
+## 常用命令
 
 | 命令 | 说明 |
 |---|---|
-| `/help` | 显示帮助（含技能命令） |
-| `/tools` | 列出 35 个可用工具 |
-| `/mode <mode>` | 切换权限模式（支持方向键选择） |
-| `/skills [list\|reload\|create]` | 技能列表 / 热重载 / 新建技能 |
-| `/project [list\|switch\|info]` | 项目管理 |
-| `/memory [overview\|history\|list\|learn\|forget\|facts\|...]` | 记忆总览 / 会话历史 / 长期与自动记忆管理 |
-| `/compact` | 压缩当前会话并存入长期记忆 |
-| `/rollback [n\|list]` | 回滚最近 n 个编辑快照 |
-| `/audit [n]` | 查看最近 n 条审计日志 |
-| `/init` | 初始化项目信息（生成 CLAUDE.md） |
-| `/config` `/debug` `/clear` | 配置 / 调试 / 清空上下文 |
+| `/help` | 显示内置命令与技能命令 |
+| `/version` | 查看版本号 |
+| `/config` | 查看当前模型与运行配置 |
+| `/mode [mode]` | 查看或切换权限模式 |
+| `/clear` | 清除当前会话上下文 |
+| `/project [list\|switch\|info]` | 项目信息、列表与完整切换 |
+| `/memory` | 查看记忆总览 |
+| `/memory list\|search\|learn\|forget` | 管理长期记忆和全局自动记忆 |
+| `/compact` | 保存本次总结并融合更新项目滚动摘要 |
+| `/init` | 初始化项目信息并生成 `CLAUDE.md` |
+| `/skills [list\|reload\|create]` | 技能列表、热重载与创建 |
+| `/tools` | 列出全部工具 |
+| `/rollback [n\|list]` | 快照列表或回滚 |
+| `/audit [n]` | 查看审计日志 |
+| `/debug` | 切换调试输出 |
 | `/exit` `/quit` | 退出 |
 
-输入前缀：`!cmd` 直接跑 shell · `@path` 内联文件内容 · `#text` 快速记忆。Skills 在 `## Commands` 中定义的命令（如 `/refactor_file`）可直接调用。输入行基于 prompt_toolkit：敲 `@` 模糊补全项目文件，敲 `/` 补全命令（含技能命令）。
+根级命令 `claxcode-cli init` 用于**全局模型配置**；交互命令 `/init` 用于**项目初始化**，两者用途不同。
 
-## Skills — 可复用的能力包
+## 分层记忆
 
-一个技能 = 一个含 `SKILL.md` 的目录（+ 可选 `tools.py` 注册专属工具），内容自动注入系统提示词。六层加载，同名后者覆盖前者：
+| 层 | 存储 | 用途 |
+|---|---|---|
+| 会话消息 | SQLite | 每轮保存，CLI 启动时恢复项目最近会话 |
+| 全局自动记忆 | `~/.claxcode/auto_memory.json` | 稳定的用户偏好和事实，下一轮即可生效 |
+| 长期记忆 | SQLite | 保存项目或全局历史事件，按当前问题进行中文相关性检索 |
+| 项目记忆 | SQLite + `CLAUDE.md` | 分别保存滚动项目状态与稳定项目约定 |
 
-| 级别 | 路径 |
-|---|---|
-| 内置（随包发布） | `claxcode/skills/`（任务工作流、缺陷修复、代码审查三套方法论 + Python 重构） |
-| 用户级 | `~/.claxcode/skills/`、`~/.agent/skills/` |
-| 项目级 | `./.claxcode/skills/`、`./.agent/skills/`、`./skills/` |
+`/compact` 会分别生成本次总结和项目滚动摘要，并立即持久化清空后的会话。上下文过长时也会自动压缩早期消息。
 
-```bash
-/skills create my-skill    # 生成规范的技能脚手架
-/skills reload             # 改完热重载，无需重启
+## 工具与子代理
+
+内置 **35 个工具**：
+
+- 文件操作 ×7、搜索 ×3、执行 ×3。
+- Web ×2、浏览器 ×9（可选）、SSH ×5。
+- 代码智能 ×3，以及记忆、管理和示例工具。
+
+子代理：
+
+| 类型 | 权限 | 用途 |
+|---|---|---|
+| `explore` | 只读 | 代码库探索与答疑 |
+| `planner` | 只读 | 方案设计与任务拆解 |
+| `executor` | 全部工具 | 独立上下文执行实现 |
+
+## Skills
+
+一个 Skill 是包含 `SKILL.md` 的目录，可选 `tools.py` 注册专属工具。
+
+加载顺序为内置 → 用户级 → 项目级，同名后者覆盖前者：
+
+- 内置：`claxcode/skills/`
+- 用户：`~/.claxcode/skills/`、`~/.agent/skills/`
+- 项目：`.claxcode/skills/`、`.agent/skills/`、`skills/`
+
+```text
+/skills create my-skill
+/skills reload
 ```
 
-## Hooks — 工具调用的生命周期钩子
+Skill 的 `tools.py` 会通过 `exec()` 加载，不要加载不可信来源的 Skill。
 
-在 `~/.claxcode/hooks.json`（全局）或 `<项目>/.claxcode/hooks.json`（项目）中配置 shell 钩子：
+## Shell Hooks
+
+在 `~/.claxcode/hooks.json` 或项目 `.claxcode/hooks.json` 中配置：
 
 ```json
 {
@@ -130,104 +235,81 @@ claxcode-cli --mode auto_safe   # 可改代码，不跑命令
 }
 ```
 
-- `match` 是匹配工具名的正则（空或 `*` 匹配全部）
-- 钩子从 stdin 收到 JSON（工具名/参数/结果），环境变量 `CLAXCODE_TOOL_NAME`、`CLAXCODE_TOOL_ARGS`（Windows 用 `%VAR%`，bash 用 `$VAR`）
-- **PreToolUse 退出码非 0 → 阻断该工具调用**；钩子超时/启动失败不会阻塞主流程
+`match` 是工具名正则。Pre Hook 非零退出会阻止工具；超时或启动失败不会阻塞主流程。Hooks 本身是 Shell 命令，只使用可信配置。
 
-## 记忆系统
-
-| 层 | 存储 | 说明 |
-|---|---|---|
-| 会话消息 | SQLite（`sessions` 表） | 每轮自动保存；API 按会话恢复，CLI 启动自动续聊（`/clear` 重开） |
-| 自动记忆 | `~/.claxcode/auto_memory.json` | 用户偏好/事实，注入系统提示；`#` 快捷记录、agent 也可用 `remember_fact` 工具自记 |
-| 长期记忆 | SQLite | `/compact` 用 LLM 压缩会话存档，按关键词检索，新会话自动注入相关记忆 |
-| 项目记忆 | SQLite + `CLAUDE.md` | `/init` 采集项目信息，每次会话自动加载 |
-
-上下文超长时自动触发 LLM 摘要压缩（保留系统提示，早期对话浓缩为摘要）。
-
-## 工具一览（35 个）
-
-文件操作 ×7 · 搜索 ×3（glob/grep/代码库探索）· 执行 ×3（shell/测试/git）· Web ×2 · 浏览器 ×9（Playwright，可选 `[browser]`；会话跨调用与跨对话连续，可"导航→点击→输入→截图"链式操作同一页面）· SSH ×5 · 代码智能 ×3（类型检查/定义/引用）· 记忆 ×1 · 管理 ×1 · 示例 ×1。新增工具只需在 `claxcode/tools/` 放一个模块，自动发现并注册。
-
-## 子代理
-
-| 类型 | 权限 | 用途 |
-|---|---|---|
-| `explore` | 只读 | 代码库探索、答疑 |
-| `planner` | 只读 | 方案设计、任务拆解 |
-| `executor` | 全部工具 | 独立上下文执行实现 |
-
-## API 服务
+## HTTP API
 
 ```bash
-claxcode          # http://127.0.0.1:8000
+claxcode
+# http://127.0.0.1:8000
+GET /health -> ok
 ```
 
-- `POST/GET/GET{id}/DELETE /sessions` — 会话管理（对话自动持久化与恢复）
-- `POST /sessions/{id}/chat` — SSE 流式对话（`thinking`/`message_delta`/`tool_call`/`tool_result`/`done` 事件）
-- `GET /tools`、`POST /tools/invoke` — 工具查询与直接调用
-- `POST /subagents`、`GET /subagents/{id}`、`POST /subagents/{id}/stream` — 子代理
+主要接口：
 
-## LLM 配置进阶
+- `POST /sessions`、`GET /sessions`、`GET/DELETE /sessions/{id}`
+- `POST /sessions/{id}/chat`：SSE 流式聊天
+- `GET /tools`、`POST /tools/invoke`
+- `POST /subagents`、`GET /subagents/{id}`、`POST /subagents/{id}/stream`
 
-| Provider | `LLM_PROVIDER` | 说明 |
-|---|---|---|
-| OpenAI | `openai` | GPT-4o 等 |
-| Anthropic | `anthropic` | 需 `pip install -e ".[anthropic]"` |
-| OpenAI 兼容 | `generic_openai` | vLLM / LM Studio / DashScope 等 |
-| Ollama | `ollama` | 本地模型，`LLM_CUSTOM_CONFIG={"ollama_options":{"num_ctx":8192}}` |
-| 自定义 HTTP | `custom_http` | 请求模板 + 响应路径，适配任意 API |
-| 代码注册 | 任意名字 | `register_custom_provider(name, MyProvider)` |
+## 当前限制与计划
 
-`custom_http` 示例（模板变量：`{api_key}` `{model}` `{messages}` `{temperature}` `{max_tokens}` `{tools}`）：
+当前暂不支持：
 
-```env
-LLM_PROVIDER=custom_http
-LLM_CUSTOM_CONFIG={"request_template":{"url":"http://localhost:8000/chat","method":"POST","headers":{"Authorization":"Bearer {api_key}"},"body":{"model":"{model}","messages":"{messages}","stream":true}},"response_parser":{"content_path":"choices.0.delta.content"}}
-```
+- 图片/视觉输入。
+- MCP 客户端。
+- IDE 插件。
+- `/resume` 会话列表选择器；CLI 目前自动恢复项目最近会话。
 
-## 与 Claude Code 的对比
+计划方向：MCP、任务清单工具、会话选择器和插件系统。欢迎围绕这些方向讨论与贡献。
 
-覆盖其核心工作流的 **~85%**：Agentic 循环、流式输出、权限审批、快照回滚、技能、钩子、子代理、记忆、headless、`!`/`@`/`#` 前缀、视觉理解均已具备。主要差异：
-
-- ✅ **视觉理解**：`@图片路径` 直接看图，浏览器截图自动进入模型视野（OpenAI 兼容 / Anthropic / Ollama 格式自动适配；`.env` 中 `LLM_VISION=false` 可关闭）
-- ❌ MCP（Model Context Protocol）— 规划中，下一优先级
-- ❌ IDE 插件
-- ⚠️ 会话恢复为"自动续上次"，暂无 `/resume` 列表选择器
-- ➕ 独有：SSH/浏览器工具、自定义 HTTP Provider 模板、SSE API 服务
-
-## Roadmap
-
-- [ ] MCP 客户端（stdio，发现并注册远端工具）
-- [ ] 任务清单跟踪（TodoWrite 类工具）
-- [ ] `/resume` 会话选择器
-- [ ] 插件系统（`extensions/plugins.py`）
-
-## 开发与测试
-
-编码原则（最少代码、最简单实现）：扁平优于嵌套；重复三行优于过早抽象；不为想象中的需求加配置；死代码立即删除；新功能必带测试。
+## 开发与贡献
 
 ```bash
-pytest          # 157 个测试
+python -m pip install -e ".[dev]"
+pytest
 ruff check claxcode tests
 mypy claxcode
 ```
 
-目录结构、设计决策与扩展指南见 [AGENTS.md](AGENTS.md)。欢迎 Issue / PR。
+贡献建议：
+
+1. 先通过 Issue 描述问题或使用场景，再提交聚焦的小改动。
+2. 新功能和缺陷修复应包含快速、无需真实 LLM 或公网的测试。
+3. 遵循现有 async/await、类型标注和目录结构，不引入未声明依赖。
+4. 修改命令或架构行为时同步更新 README 与 `AGENTS.md`。
+5. 不提交 `.env`、`.claxcode/`、真实凭据或本机运行数据。
+
+静态检查目前仍有历史存量告警；贡献代码至少不应新增告警。架构与扩展细节见 [AGENTS.md](AGENTS.md)。
+
+发布包检查：
+
+```bash
+python -m build
+python -m twine check dist/*
+```
 
 ## 常见问题
 
-**Windows cmd 提示 "claxcode-cli 不是内部或外部命令"？**
-pip 安装的命令在 Python 的 `Scripts` 目录（venv 为 `.venv\Scripts`，`--user` 安装为 `%APPDATA%\Python\Python3xx\Scripts`），需加入 PATH；也可以直接用 `python -m claxcode.cli` 启动。
+**Windows 提示 `claxcode-cli` 不是命令？**
 
-**cmd 下输出乱码或报错？**
-CLI 启动时会自动把控制台输出切换为 UTF-8；仍有问题请使用 Windows Terminal，或先执行 `chcp 65001`。
+确认 Python 的 `Scripts` 目录已加入 PATH，或使用：
 
-**ssh_execute 执行很慢？**
-远程命令按 `timeout`（默认 300 秒）自动超时并返回已产生的输出；交互模式下随时可按 Ctrl+C 中止。
+```bash
+python -m claxcode.cli
+```
 
-**想用有头浏览器观察操作过程？**
-直接对 agent 说"用有头浏览器打开 …"即可（模式切换时浏览器自动重启，后续操作连续生效）；要改全局默认，在 `.env` 中设置 `BROWSER_HEADLESS=false`。
+**终端出现乱码？**
+
+CLI 会尝试启用 UTF-8。仍有问题时建议使用 Windows Terminal，或先执行 `chcp 65001`。
+
+**如何使用有头浏览器？**
+
+直接要求 Agent 使用有头浏览器，或在配置中设置 `BROWSER_HEADLESS=false`。
+
+**如何中止耗时操作？**
+
+输入或工具执行期间可使用 Ctrl+C；SSH 等长任务会轮询取消标记。
 
 ## License
 

@@ -44,6 +44,7 @@ class RunShell(Tool):
     required_permissions = ["execute"]
 
     async def execute(self, command: str, cwd: str = ".", timeout: int = 60, **kwargs: Any) -> str:
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -59,8 +60,15 @@ class RunShell(Tool):
                 output += f"\n[exit code: {proc.returncode}]"
             return output
         except TimeoutError:
-            proc.kill()
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             return f"Error: Command timed out after {timeout}s"
+        except KeyboardInterrupt:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise
         except Exception as exc:
             return f"Error: {exc}"
 

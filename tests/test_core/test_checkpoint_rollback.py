@@ -60,3 +60,12 @@ async def test_snapshot_missing_file_is_noop(tmp_path):
     dest = await mgr.snapshot(sid, str(tmp_path / "nope.py"))
     assert dest == Path()
     assert mgr.list_snapshots(sid) == []
+
+
+async def test_nonpositive_snapshot_limit_returns_empty(tmp_path):
+    mgr = _mgr(tmp_path)
+    target = tmp_path / "a.py"
+    target.write_text("v1", encoding="utf-8")
+    sid = uuid4()
+    await mgr.snapshot(sid, str(target))
+    assert mgr.list_snapshots(sid, limit=0) == []

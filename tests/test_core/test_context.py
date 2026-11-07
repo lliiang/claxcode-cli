@@ -60,3 +60,35 @@ def test_restore_empty_is_noop():
     ctx = ContextManager(system_prompt="sys")
     ctx.restore([])
     assert len(ctx.messages) == 1
+
+
+def test_restore_drops_orphan_assistant_tool_calls():
+    ctx = ContextManager(system_prompt="sys")
+    ctx.restore([
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x"}}],
+        },
+    ])
+
+    assert len(ctx.messages) == 2
+    assert ctx.messages[1] == {"role": "user", "content": "hi"}
+
+
+def test_restore_keeps_valid_tool_call_pairs():
+    ctx = ContextManager(system_prompt="sys")
+    ctx.restore([
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x"}}],
+        },
+        {"role": "tool", "tool_call_id": "tc1", "content": "out"},
+    ])
+
+    assert len(ctx.messages) == 4
+    assert ctx.messages[2]["role"] == "assistant"
+    assert ctx.messages[3] == {"role": "tool", "tool_call_id": "tc1", "content": "out"}

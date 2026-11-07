@@ -1,156 +1,282 @@
 # AGENTS.md — ClaxCode
 
-Guidance for AI coding agents working in this repository. Assumes no prior knowledge of the project.
+本文面向首次接触本仓库的 AI 编程代理，说明当前实现、开发命令和修改约定。阅读代码时以实际实现为准；`README.md` 是主要的人类可读说明，本文侧重开发与架构细节。
 
-## Project Overview
+## 项目概览
 
-ClaxCode is an **agentic coding assistant** (inspired by Claude Code) written in Python. It has two front-ends sharing the same core:
+ClaxCode 是一个用 Python 编写的开源、自托管 Agentic 编程助手，灵感来自 Claude Code。两个前端共享同一套 Agent、LLM Provider、工具、权限和记忆系统：
 
-- **Interactive CLI** (`claxcode-cli`) — a REPL-style terminal assistant. Slash commands are declared in a dispatch table in `cli.py` (and `/help` is generated from it); skill-defined commands (`## Commands` in SKILL.md) are routed to the agent as instructions. Input prefixes: `!cmd` runs a shell command directly, `#text` saves a quick auto-memory note, `@path` inlines a file's content. `--print/-P PROMPT` runs one prompt non-interactively (headless). Input uses prompt_toolkit (`cli_completion.py`): `@` fuzzy-completes project files (ignoring dependency/cache dirs), `/` completes builtin and skill commands; falls back to plain `input()` when no console is attached. The conversation is persisted per turn and resumed on next launch (`.claxcode/cli_session`).
-- **HTTP API server** (`claxcode`) — a FastAPI app that streams chat events over SSE.
+- **交互式 CLI**（`claxcode-cli`）：REPL 终端助手，也支持 `--print/-P` 单发模式。斜杠命令集中定义在 `claxcode/cli.py` 的 `_build_commands()` 中，`/help` 由该表生成。
+- **HTTP API**（`claxcode`）：FastAPI 应用，通过 SSE 流式返回聊天事件。
 
-The core is an **Agentic Loop** (`claxcode/core/agent.py`): gather context -> think (LLM streaming) -> act (tool calls) -> verify, capped at `max_iterations = 10` per user message. The agent talks to an abstracted LLM provider, calls tools from a central registry, snapshots files before editing them, and injects project context (`CLAUDE.md`), skills, and long-term/project memories into the system prompt.
+核心循环位于 `claxcode/core/agent.py`：收集上下文 → 流式调用 LLM → 执行工具 → 发出验证标记并进入下一轮。每条用户消息最多迭代 10 次；没有工具调用时结束。主 Agent 会把系统提示、项目上下文、Skills、自动记忆、项目记忆及相关长期记忆组合进上下文。
 
-## Technology Stack
+当前版本**不支持图片/视觉输入**；CLI 的 `@path` 会跳过常见图片扩展名。
 
-- **Python >= 3.11**, packaging via `pyproject.toml` with the **hatchling** build backend; installed with pip.
-- **FastAPI + Uvicorn** for the API server; SSE via `StreamingResponse`.
-- **Pydantic v2 + pydantic-settings** for settings, API models, and tool input schemas.
-- **SQLAlchemy 2.0 (async) + aiosqlite** for persistence; SQLite by default.
-- **httpx** for all outbound HTTP, including the OpenAI-compatible provider (the `openai` package is *not* used).
-- **paramiko** for SSH tools; **playwright** for browser tools (optional, lazily imported; install the `browser` extra).
-- **pytest + pytest-asyncio + pytest-httpx** for tests; **ruff** and **mypy** are configured (see "Code Style" for their current state).
+## 技术栈与关键配置
 
-## Code Organization
+- Python **>= 3.11**；`pyproject.toml` 使用 **hatchling** 构建 wheel，包名为 `claxcode`，版本为 `0.1.0`。
+- **FastAPI + Uvicorn**：HTTP API 与 SSE（`StreamingResponse`）。
+- **Pydantic v2 + pydantic-settings**：配置和 API 数据模型。
+- **SQLAlchemy 2.0 异步 API + aiosqlite**：默认使用本地 SQLite。
+- **httpx**：OpenAI 兼容、Ollama、自定义 HTTP Provider 以及 Web 工具的 HTTP 请求；OpenAI Provider 不依赖 `openai` SDK。
+- **prompt-toolkit**：CLI 的 `@` 文件模糊补全和 `/` 命令补全。
+- **paramiko**：SSH 工具。
+- **Playwright**：可选浏览器工具，延迟导入，通过 `browser` extra 安装。
+- **pytest + pytest-asyncio + pytest-httpx**：测试；**ruff** 和 **mypy**：静态检查。
 
-```
-claxcode/
-├── main.py            # FastAPI app factory, /health, router wiring, uvicorn launcher
-├── cli.py             # InteractiveCLI REPL (entry point `claxcode-cli`), slash commands
-├── config.py          # `settings` — pydantic-settings, reads .env
-├── api/               # FastAPI routers: session, chat (SSE), tools, subagents
-├── core/
-│   ├── agent.py       # Agent: the agentic loop, permission check, pre-edit snapshots
-│   ├── models.py      # LLMProvider ABC + OpenAI/Anthropic/GenericOpenAI/Ollama/CustomHTTP/Dummy providers
-│   ├── context.py     # ContextManager: message history, rough token estimate, summary compression
-│   └── checkpoint.py  # CheckpointManager: snapshots files into .claxcode/snapshots/ before edits; manifest-based list/restore (rollback)
-├── tools/             # Tool base class, registry, and built-in tools (auto-discovered)
-├── subagents/         # Subagent base + explore/planner (read-only) and executor (all tools)
-├── memory/            # session_store (SQLAlchemy ORM + init_db), long-term & project memory, durable auto_memory
-├── extensions/        # skills.py and hooks.py (working); mcp.py, plugins.py are STUBS
-├── security/          # permissions.py (modes, enforced in the agent loop); audit.py (durable JSONL logger)
-├── skills/            # Built-in skills shipped with the app: task-workflow, bug-fix, code-review, python-refactor
-└── models/            # Pydantic request/response models for the API
+关键文件：
 
-tests/                 # pytest suite, mirrors the package layout
-```
+| 文件/目录 | 作用 |
+|---|---|
+| `pyproject.toml` | 构建、依赖、console scripts、pytest、ruff、mypy 的唯一主要配置 |
+| `.env.example` | 最小环境变量模板；复制为 `.env` 后填写 Provider 和密钥 |
+| `claxcode/config.py` | 全部环境驱动设置；`.env` 中未知变量会被忽略 |
+| `README.md` | 中文使用说明、功能介绍和示例 |
+| `CLAUDE.md` | 注入 Agent 的项目上下文；当前是 `/init` 生成的基本模板 |
+| `.claxcode/` | 本地运行时状态：数据库、快照、审计日志、CLI 会话指针等，不应提交 |
 
-### Tool system
+仓库没有 `package.json`、锁文件、Makefile、Dockerfile、CI 配置或独立部署配置。
 
-- All tools subclass `Tool` (`claxcode/tools/base.py`): class attrs `name`, `description`, `input_schema` (JSON Schema), `category`, `required_permissions` (subset of `"read"`, `"write"`, `"execute"`, `"web"`); implement `async execute(**kwargs) -> str`.
-- The `@tool` decorator (`claxcode/tools/registry.py`) registers an instance in the global `registry`.
-- `claxcode/tools/__init__.py` **auto-imports every module in the package** via `pkgutil` — dropping a new module into `claxcode/tools/` is enough to register its tools. Both entry points import `claxcode.tools` for this side effect.
-- Built-in tools (35 total): file ops (`read_file`, `write_file`, `str_replace_file`, `view_file`, `edit_file`, `create_directory`, `rename_file`), search (`glob_search`, `grep_search`, `explore_codebase`), execution (`run_shell`, `run_tests`, `git_command`), web (`fetch_url`, `web_search` — DuckDuckGo HTML scraping), browser (9 Playwright tools on a persistent, actor-owned session — the same page stays open across tool calls and conversation turns; screenshots attach as image content parts for vision-capable models), SSH (5 paramiko tools), code intelligence (`type_check`, `find_definition`, `find_references`), admin (`admin_add_tool`), memory (`remember_fact`), example (`calculate`).
-- Long-running tools (e.g. `ssh_execute`) poll the cancel flag in `tools/execution.py` (`is_tool_cancelled()`): the agent resets it before each user message, the CLI sets it on Ctrl+C.
+## 安装、构建与运行
 
-### LLM providers
-
-`claxcode/core/models.py` defines the `LLMProvider` ABC (`stream_chat(messages, tools)` yielding `str` chunks or tool-call dicts) and `get_provider()`, which dispatches on `LLM_PROVIDER`: `openai`, `anthropic` (requires the optional `anthropic` package), `generic_openai` (vLLM/LM Studio/DashScope), `ollama`, `custom_http` (template-driven via `LLM_CUSTOM_CONFIG`), or anything registered at runtime with `register_custom_provider()`. Unknown or broken configuration falls back to `DummyProvider` so the app always starts.
-
-### Persistence
-
-`claxcode/memory/session_store.py` holds all ORM tables (`sessions`, `subagent_tasks`, `long_term_memories`, `project_memories`). Tables are created with `Base.metadata.create_all` in `init_db()` — **there are no migrations** (Alembic is a noted future option). Runtime data lives under `./.claxcode/` (`claxcode.db`, `snapshots/`). Conversation messages are persisted per chat turn (`save_session_messages`/`get_session_messages` on the `sessions.messages` column): the API restores them per request, and the CLI resumes the last session via `.claxcode/cli_session`. `memory/auto_memory.py` is a durable JSON key-value store at `~/.claxcode/auto_memory.json` — injected into the system prompt, writable via the `remember_fact` tool or `/memory learn` in the CLI. `/compact` also writes the project `context_summary` (via `project_memory.update_summary`), which is injected into future sessions.
-
-### Language convention
-
-Module docstrings, `README.md`, and this file are in **English**; inline comments, CLI output, error messages, and LLM-facing prompts are largely in **Chinese** (e.g. the default system prompt in `core/agent.py`). Match the surrounding style when editing: English for docstrings, Chinese for user-facing strings.
-
-## Build and Run
+在仓库根目录执行。 editable 安装不需要单独的构建步骤。
 
 ```bash
-# Setup (Windows)
 python -m venv .venv
+# Windows cmd / PowerShell：
 .\.venv\Scripts\activate
-pip install -e "."            # core
-pip install -e ".[dev]"       # + pytest, ruff, mypy
-pip install -e ".[openai]" / ".[anthropic]"  # optional provider SDKs
+# Unix  shells：
+source .venv/bin/activate
 
-# API server (http://127.0.0.1:8000, GET /health -> "ok")
-claxcode                      # or: python -m claxcode.main
-
-# Interactive CLI
-claxcode-cli --project . --mode ask          # modes: ask|auto_edit|plan|auto_safe|yolo
+pip install -e ".[dev]"
+cp .env.example .env       # 然后编辑 .env
 ```
 
-Console scripts (`pyproject.toml [project.scripts]`): `claxcode` -> `claxcode.main:run`, `claxcode-cli` -> `claxcode.cli:main`.
-
-API surface: `POST/GET/GET{id}/DELETE /sessions`, `POST /sessions/{id}/chat` (SSE stream of `thinking`/`message_delta`/`tool_call`/`tool_result`/`done` events), `GET /tools`, `POST /tools/invoke`, `POST /subagents`, `GET /subagents/{id}`, `POST /subagents/{id}/stream`.
-
-## Testing
+可选依赖：
 
 ```bash
-pytest            # 170 tests, all passing at time of writing
+pip install -e ".[anthropic]"  # AnthropicProvider 需要 anthropic SDK
+pip install -e ".[browser]"    # 浏览器工具需要 Playwright；还需可用的 Chromium
 ```
 
-- Config in `pyproject.toml`: `asyncio_mode = "auto"`, `testpaths = ["tests"]` — async tests need no decorator.
-- `tests/conftest.py` provides a `client` fixture: an httpx `AsyncClient` over `ASGITransport(app)` with `init_db()` called first. Use it for API tests.
-- Tests mirror the source layout (`test_api/`, `test_core/`, `test_tools/`, `test_security/`, `test_extensions/`). Add tests for new tools/providers following the existing style.
-- `pytest-httpx` is available for mocking outbound LLM/HTTP calls; tests must not require a real LLM or network.
+`pyproject.toml` 也声明了 `openai` extra，但当前 OpenAI/OpenAI 兼容 Provider 直接使用 httpx，不导入该 SDK。
 
-## Code Style
+启动方式：
 
-**Principles — minimal code, simplest implementation:**
+```bash
+# FastAPI 服务，默认 http://127.0.0.1:8000；GET /health 返回纯文本 ok
+claxcode
+# 等价：python -m claxcode.main
 
-1. Write the least code that satisfies the requirement — nothing more.
-2. Flat over nested: early returns, no deep if-chains, no complex nesting.
-3. Three similar lines beat a premature abstraction; no speculative configurability.
-4. Delete dead code immediately (vulture is run periodically); fix bugs at the root, not at call sites.
-5. Every feature ships with fast, network-free tests in the same PR of work.
+# 交互式 CLI
+claxcode-cli --project . --mode ask
+# 等价：python -m claxcode.cli --project . --mode ask
 
-- Configured in `pyproject.toml`: **ruff** (`line-length = 100`, `target-version = "py311"`, rules `E,F,I,N,W,UP,B,C4,SIM`) and **mypy** (`strict = true`, py3.11).
-- Current state: `ruff check claxcode tests` reports ~44 errors and `mypy claxcode` ~131 errors — **neither is clean**, so do not treat them as gates, but do not add new violations either.
-- Idioms: async/await throughout, type hints, `pathlib.Path`, Google-style docstrings, absolute imports (`from claxcode.x import y`).
-- Keep tool results as plain strings (the `Tool.execute()` contract); never raise from `execute()` — return an error string, as callers stringify exceptions anyway.
+# 非交互单发模式；正文走 stdout，工具事件走 stderr
+claxcode-cli --print "总结这个项目的结构"
+```
 
-## Configuration
+`claxcode` 和 `claxcode-cli` 分别映射到 `claxcode.main:run`、`claxcode.cli:main`。Uvicorn 的 host、port 和 reload 由环境设置控制。
 
-Copy `.env.example` to `.env`. All settings are env-driven (`claxcode/config.py`, `extra="ignore"`):
+## 运行时架构
 
-| Variable | Default | Notes |
+```text
+CLI / FastAPI API
+       │
+       ▼
+Agent（上下文组装、最多 10 轮循环）
+       ├── LLMProvider（流式文本与工具调用）
+       ├── ToolRegistry（内置及 Skill 工具）
+       │     └── 权限 → PreToolUse → 写前快照 → 工具 → PostToolUse → 审计
+       └── ContextManager（历史恢复、估算、压缩）
+              │
+              ▼
+SQLite 会话/子代理/长期记忆/项目记忆 + 本地 JSON 自动记忆
+```
+
+### CLI 行为
+
+- `!cmd`：直接调用 `run_shell`，Ctrl+C 会终止子进程并返回提示；`@path` 或 `@"带 空格的路径"`：把项目内 UTF-8 文本文件内容（最多 8000 字符）附加到提示，重复引用只内联一次，加载失败会在 stderr 给出原因；`#text`：写入自动记忆。
+- prompt_toolkit 不可用或没有真实控制台时退回普通 `input()`。文件索引最多缓存 5000 个路径，30 秒过期，并排除依赖/缓存目录。`@` 支持模糊文件补全，`/` 支持命令和常用参数补全；输入历史存于 `.claxcode/cli_history`，Enter 提交、Alt+Enter 换行、Ctrl+C 清空非空输入。
+- 每个项目的 `.claxcode/cli_session` 保存最近会话 UUID；每轮结束后保存消息，下次启动自动恢复，`/clear` 清空上下文。`/project switch` 会保存旧会话，重建项目 Agent、Skills、Hooks 和补全，再恢复目标项目会话；命令参数支持成对引号和 Windows 路径。`/init` 覆盖已有 `CLAUDE.md` 前需要确认。
+- `ask` 模式的交互审批支持 `y`（允许一次）、`a`（本会话始终允许该工具）、`N`（拒绝）；切换 `/mode` 会清空自动批准集合。
+- Ctrl+C 设置全局工具取消标记；长任务（例如 SSH）轮询该标记，Agent 在处理下一条用户消息前重置它。
+
+### API 表面
+
+- `POST /sessions`、`GET /sessions`、`GET /sessions/{id}`、`DELETE /sessions/{id}`：会话管理。
+- `POST /sessions/{id}/chat`：SSE 聊天；事件包括 `thinking`、`message_delta`、`tool_call`、`tool_result_start`、`tool_result`、可选 `debug`、`done`。
+- `GET /tools`、`POST /tools/invoke`：列出工具、直接调用工具。
+- `POST /subagents`、`GET /subagents/{task_id}`、`POST /subagents/{task_id}/stream`：创建、查询和流式运行子代理任务。
+- `GET /health`：健康检查。
+
+每次 API 聊天请求都会新建 Agent、从数据库恢复该会话消息，并在流结束后重新保存。FastAPI lifespan 启动时初始化数据库。
+
+## 代码组织
+
+```text
+claxcode/
+├── main.py                 # FastAPI app、路由注册、/health、Uvicorn 启动
+├── cli.py                  # REPL、单发模式、斜杠命令、审批与 CLI 持久化
+├── cli_completion.py       # @ 文件和 / 命令补全
+├── config.py               # pydantic-settings 全局 settings
+├── api/                    # session、chat、tools、subagents 路由
+├── models/                 # API 的 Pydantic 请求/响应模型
+├── core/
+│   ├── agent.py            # 主 Agent 循环及工具执行管线
+│   ├── models.py           # LLMProvider 抽象和各 Provider
+│   ├── context.py          # 消息历史、Token 粗估、摘要压缩、恢复清理
+│   └── checkpoint.py       # 写前文件快照、manifest、列表与回滚
+├── tools/                  # Tool 基类、注册表及自动发现的内置工具
+├── memory/
+│   ├── session_store.py    # SQLAlchemy ORM、init_db、会话和子代理持久化
+│   ├── long_term.py        # 长期记忆检索、导入导出等
+│   ├── project_memory.py   # 项目记录与摘要
+│   ├── project_context.py  # CLAUDE.md / .claxcode/context.md 加载
+│   └── auto_memory.py      # ~/.claxcode/auto_memory.json，最多 50 条
+├── extensions/
+│   ├── skills.py           # Skill 加载、覆盖、命令和 tools.py 动态注册
+│   ├── hooks.py            # PreToolUse / PostToolUse shell hooks
+│   ├── mcp.py              # 占位实现，仅返回空工具列表
+│   └── plugins.py          # 占位实现
+├── security/
+│   ├── permissions.py      # 五种权限模式
+│   └── audit.py            # .claxcode/audit.jsonl 审计日志
+├── subagents/              # explore、planner、executor 及独立上下文基类
+└── skills/                 # task-workflow、bug-fix、code-review、python-refactor
+
+tests/                      # 按 api/core/tools/memory/security/extensions 分组的 pytest 套件
+```
+
+### 工具系统
+
+- 工具继承 `claxcode/tools/base.py` 的 `Tool`，定义 `name`、`description`、JSON Schema `input_schema`、`category`、`required_permissions`，实现 `async execute(**kwargs) -> str`。
+- `@tool` 在 `claxcode/tools/registry.py` 中把实例注册进全局 `registry`。
+- `claxcode/tools/__init__.py` 使用 `pkgutil` 自动导入包内模块（排除 base、registry 和 `__init__`）；新增工具模块通常不需要手工登记。两个入口都导入 `claxcode.tools` 以触发发现。
+- 当前有 **35 个内置工具**：文件操作 7、搜索 3、执行 3、Web 2、浏览器 9、SSH 5、代码智能 3，以及 `remember_fact`、`admin_add_tool`、`calculate`。
+- 浏览器工具共享 actor 式持久会话，同一页面可跨工具调用和对话轮次连续使用。Playwright 或 Chromium 不可用时，相应测试会跳过。
+- 工具结果保持普通字符串；新增工具应把预期异常转换成错误字符串，不让 `execute()` 直接向调用方抛出异常。
+
+### LLM Provider
+
+`claxcode/core/models.py` 定义 `LLMProvider.stream_chat(messages, tools)`，以异步迭代器产生文本块或工具调用字典。`get_provider()` 支持：
+
+- `openai`：OpenAI API，httpx 实现。
+- `generic_openai`：vLLM、LM Studio、DashScope 等 OpenAI 兼容端点。
+- `anthropic`：Anthropic SDK；未安装依赖时退回 `DummyProvider`。
+- `ollama`：原生 `/api/chat`，`LLM_CUSTOM_CONFIG` 可传 `ollama_options`。
+- `custom_http`：通过 `request_template` 和 `response_parser` 适配自定义流式 HTTP API。
+- 运行时通过 `register_custom_provider(name, cls)` 注册的其他 Provider。
+
+未知名称会退回 `DummyProvider`，使应用仍能启动并报告配置问题。
+
+### 上下文与持久化
+
+- `init_db()` 用 `Base.metadata.create_all` 创建 `sessions`、`subagent_tasks`、`long_term_memories`、`project_memories`；**没有数据库迁移系统**。
+- 默认数据库为 `./.claxcode/claxcode.db`。会话消息以 JSON 存在 `sessions.messages`，系统提示不持久化。
+- `ContextManager.restore()` 会清理不完整的工具调用/结果配对，避免 Provider 拒绝孤立消息。
+- Token 数是粗略字符估算（`len(text) // 3 + 1`）。超过阈值时，主 Agent 调用 LLM 总结最旧的一半消息；新增消息时的硬上限保护会直接丢弃最旧消息。
+- 系统提示可由 `~/.claxcode/system_prompt.md` 覆盖；项目上下文依次尝试 `CLAUDE.md`、`.claxcode/context.md`。
+- 记忆职责分层：`~/.claxcode/auto_memory.json` 只保存稳定的全局用户偏好/事实；长期记忆保存项目或全局历史事件；项目记忆保存滚动状态摘要。自动记忆和长期记忆每轮动态刷新，避免当前会话写入后不生效或重复注入。
+- 长期记忆检索使用“当前项目 + 全局”作用域，支持中文词语与二字片段相关性排序，无匹配时退回少量近期记忆；项目路径在写入和查询时统一标准化。
+- `/compact` 分别生成本次总结与融合旧状态的项目滚动摘要，写入长期记忆和项目记忆后立即持久化清空后的会话；项目未 `/init` 时也会自动创建摘要记录。
+
+## 环境变量
+
+所有设置见 `claxcode/config.py`；下表默认值来自代码，而不是仅来自 `.env.example`。
+
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `openai` / `anthropic` / `generic_openai` / `ollama` / `custom_http` / custom-registered name |
-| `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` | — / — / `gpt-4o` | |
-| `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | `0.2` / `4096` | |
-| `LLM_CUSTOM_CONFIG` | `""` | JSON string: `ollama_options`, or `request_template`/`response_parser` for `custom_http` |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./.claxcode/claxcode.db` | |
+| `LLM_PROVIDER` | `openai` | Provider 名称或运行时注册的自定义名称 |
+| `LLM_API_KEY` / `LLM_BASE_URL` | 空字符串 | API 密钥 / 端点 |
+| `LLM_MODEL` | `gpt-4o` | 模型名 |
+| `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` | `0.2` / `4096` | 生成参数 |
+| `LLM_CUSTOM_CONFIG` | 空字符串 | JSON；用于 Ollama 选项或自定义 HTTP 模板 |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./.claxcode/claxcode.db` | SQLAlchemy 异步连接串 |
+| `SNAPSHOTS_DIR` | `./.claxcode/snapshots` | 写前快照目录 |
+| `PROJECT_CONTEXT_FILE` | `CLAUDE.md` | 项目上下文文件名 |
 | `PERMISSION_MODE` | `ask` | `ask` / `auto_edit` / `plan` / `auto_safe` / `yolo` |
-| `MAX_CONTEXT_TOKENS`, `CONTEXT_COMPRESSION_THRESHOLD` | `128000` / `0.85` | |
-| `LLM_VISION` | `true` | Attach images as multimodal content parts (`@image`, browser screenshots) |
-| `HOST`, `PORT`, `CLAXCODE_DEBUG`, `TOOL_TIMEOUT`, `BROWSER_HEADLESS` | `127.0.0.1` / `8000` / `false` / `60` / `true` | |
+| `MAX_CONTEXT_TOKENS` | `128000` | 粗略上下文预算 |
+| `CONTEXT_COMPRESSION_THRESHOLD` | `0.85` | 触发压缩的预算比例 |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址 |
+| `CLAXCODE_DEBUG` | `false` | 调试事件、SQL echo、Uvicorn reload |
+| `TOOL_TIMEOUT` | `60` | 工具相关默认超时配置 |
+| `BROWSER_HEADLESS` | `true` | 新浏览器会话的默认模式 |
 
-Note: `python-dotenv` is declared in `pyproject.toml`; `playwright` is an optional extra (`pip install -e ".[browser]"`).
+CLI 在导入项目模块前加载模型配置，优先级为 `--env` 指定文件 > 当前目录 `.env` > `~/.claxcode/.env`；修改 CLI 的导入顺序时保留这一约束（ruff 对 `cli.py` 特意忽略 E402）。根级命令 `claxcode-cli init` 可交互创建全局配置，API Key 使用隐藏输入，覆盖已有文件前需确认；它与交互式 `/init` 的项目初始化不同。版本可通过 `/version` 或 `claxcode-cli --version/-v` 查看。
 
-## Security Considerations
+## 扩展点
 
-- A `.gitignore` now excludes `.env`, `.claxcode/`, caches, and `__pycache__/`. **`.env` was committed previously, so any keys it contained must be rotated — they remain in git history until it is rewritten.**
-- Permission modes (`security/permissions.py`): `plan` blocks tools requiring `write`/`execute`; `ask` auto-allows read-only tools and requires approval for the rest; `auto_safe` blocks `execute`; `auto_edit`/`yolo` allow everything. Every tool call passes through `check_permission()` in `Agent._execute_tool`. In `ask` mode the CLI prompts interactively (`y`/`a`/`N`, with a per-session always-allow list, cleared on `/mode` change); the API has no approval channel, so non-read tools are blocked there unless the session uses another mode. Treat `yolo` as fully unsandboxed.
-- Before any tool with `write` permission and a `path` argument runs, `CheckpointManager` copies the file to `.claxcode/snapshots/<session>/<timestamp>/` for rollback.
-- `run_shell`/`git_command` execute arbitrary shell commands; `admin_add_tool` writes new tool modules; skill `tools.py` files are `exec()`'d — all by design, all dangerous with untrusted input.
-- Every tool call (allowed or blocked) is appended to `.claxcode/audit.jsonl` by `security/audit.py`.
-- `.claxcode/` (DB + snapshots) is local runtime state — do not commit it either.
+- **新工具**：在 `claxcode/tools/` 新增模块，继承 `Tool` 并使用 `@tool`；为文件、Shell、Web 等能力准确声明权限。
+- **新 Provider**：继承 `LLMProvider`，在 `get_provider()` 加分支，或在运行时调用 `register_custom_provider()`。
+- **新 Skill**：目录中放置 `SKILL.md`（`# Name`、`## Description`、`## Instructions`，可选 `## Commands`）和可选 `tools.py`。加载顺序为内置 `claxcode/skills/` → 用户 `~/.claxcode/skills/`、`~/.agent/skills/` → 项目 `.claxcode/skills/`、`.agent/skills/`、`skills/`；同名后者覆盖前者。CLI 支持 `/skills create` 和 `/skills reload`。
+- **Hooks**：在 `~/.claxcode/hooks.json` 或项目 `.claxcode/hooks.json` 配置 `PreToolUse`/`PostToolUse`。`match` 是工具名正则；命令从 stdin 收到 JSON，并获得 `CLAXCODE_TOOL_NAME`、`CLAXCODE_TOOL_ARGS`。Pre hook 非零退出会阻止工具；启动失败或 30 秒超时不阻塞主流程。
+- **子代理**：`explore` 和 `planner` 仅开放六个只读搜索/读取工具，分别最多 8 和 5 轮；`executor` 开放全部工具，最多 10 轮。子代理拥有独立上下文。
 
-## Extending the Project
+## 开发约定与代码风格
 
-- **New tool**: create a module in `claxcode/tools/`, subclass `Tool`, apply `@tool`, implement `execute()`. Auto-discovered on next start.
-- **New LLM provider**: subclass `LLMProvider` in `core/models.py` and either add a branch in `get_provider()` or call `register_custom_provider(name, cls)` at runtime.
-- **New skill**: directory with `SKILL.md` (`# Name`, `## Description`, `## Instructions`, optional `## Commands`) plus optional `tools.py`. `SkillManager.load_defaults()` loads `claxcode/skills/` (builtin), then `~/.claxcode/skills/` and `~/.agent/skills/` (user), then `<project>/.claxcode/skills/`, `<project>/.agent/skills/` and `<project>/skills/` (project) — on a name conflict the later source wins. Content is injected into the system prompt; the CLI has `/skills create|reload`.
-- **Hooks**: `hooks.json` in `~/.claxcode/` or `<project>/.claxcode/` defines `PreToolUse`/`PostToolUse` shell commands with a regex `match` on tool names. The command gets a JSON payload on stdin and `CLAXCODE_TOOL_NAME`/`CLAXCODE_TOOL_ARGS` env vars; a non-zero PreToolUse exit blocks the tool call. Wired in `Agent._execute_tool`.
-- **Subagents**: subclass `Subagent` (`subagents/base.py`) with a restricted `allowed_tools` list; explore and planner are read-only, executor gets everything.
+遵循 README 中的原则：**最少代码、最简单实现**。
 
-## Known Gaps / Honest State
+1. 只实现当前需求，不做顺手重构或投机性配置。
+2. 扁平优于嵌套，优先提前返回；三行相似代码优于过早抽象。
+3. 在根因处修复问题，及时删除死代码。
+4. 新功能和缺陷修复应附快速、无需真实 LLM 或外部网络的测试。
+5. 使用现有 async/await、类型标注、`pathlib.Path` 和绝对导入风格，避免引入未在 `pyproject.toml` 声明的新依赖。
 
-- `extensions/mcp.py` and `plugins.py` are stubs.
-- No CI configuration, no Dockerfile, no deployment tooling — the app is run locally.
-- Context compression summarizes the oldest half of the history with the LLM when over threshold (drop-oldest remains as the hard fallback); the token estimate is still a rough `len(text)//3`.
-- `CLAUDE.md` in the repo root is a mostly-empty template generated by the CLI's `/init` command; `README.md` is the authoritative human-facing doc.
-- The `3.4.0` file in the repo root is a stray pip-install log, safe to ignore/delete.
+语言约定：`README.md`、CLI 输出、错误信息和多数 LLM 提示使用中文；模块 docstring 多数为英文，代码内注释中英混合。编辑时匹配所在文件，新增用户-facing 文本通常使用中文。
+
+静态检查命令：
+
+```bash
+ruff check claxcode tests
+mypy claxcode
+```
+
+ruff 配置为行宽 100、Python 3.11，规则 `E,F,I,N,W,UP,B,C4,SIM`；mypy 为 strict。**当前全量静态检查基线并不干净**：本次验证 ruff 报告 36 项、mypy 报告 104 项（含缺失可选依赖/类型 stub 等问题）。修改时不要新增告警，并区分存量问题与自己的改动。
+
+## 测试策略
+
+```bash
+pytest                              # 全量
+pytest tests/test_core/test_agent_permissions.py
+pytest tests/test_tools/test_file_operations.py -k write
+```
+
+`pyproject.toml` 设置 `testpaths = ["tests"]`、`asyncio_mode = "auto"`，异步测试无需统一额外装饰器（部分旧测试仍显式使用 `@pytest.mark.asyncio`）。
+
+- `tests/conftest.py` 的 `client` fixture 调用 `init_db()`，再用 httpx `ASGITransport` 和 `AsyncClient` 直接测试 FastAPI，不启动真实端口。
+- 测试目录按被测模块分组。新工具、Provider、权限或扩展功能应在相邻测试目录添加同风格测试。
+- 使用 `monkeypatch`、临时目录和假 Provider/会话隔离外部依赖；`pytest-httpx` 可用于出站 HTTP mock。测试不得要求真实 LLM 密钥或公网。
+- 浏览器集成测试只使用本地 `data:` URL；Playwright/Chromium 不可用时跳过。
+- 本次实际验证结果：**200 个测试全部通过**（`200 passed in 8.87s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
+
+## 安全注意事项
+
+主 Agent 的权限模式：
+
+| 模式 | 行为 |
+|---|---|
+| `ask` | 仅声明 `read` 的工具自动放行；其他工具需要审批。API 聊天没有审批回调，因此这些工具会被阻止 |
+| `plan` | 阻止需要 `write` 或 `execute` 的工具 |
+| `auto_safe` | 阻止需要 `execute` 的工具，允许读、写和 Web 工具 |
+| `auto_edit` / `yolo` | 当前实现均放行全部工具；`yolo` 应视为完全无沙箱 |
+
+主 Agent 的 `_execute_tool()` 顺序为：权限检查 → Pre hook → 对带 `path` 参数的写工具创建快照 → 执行 → Post hook → 审计。快照只覆盖执行前已存在的文件，位于 `.claxcode/snapshots/<session>/<timestamp>/`，原始路径记录在 `manifest.json`；CLI `/rollback` 使用这些 manifest 恢复。允许和被阻止的主 Agent 工具调用都会尝试写入 `.claxcode/audit.jsonl`。
+
+必须注意以下边界：
+
+- `POST /tools/invoke` 直接执行工具，**不经过**主 Agent 的权限、hooks、快照和审计管线。
+- 子代理基类也直接执行其允许列表中的工具；`executor` 的全部工具调用不经过主 Agent 管线。
+- CLI 的 `!cmd` 是直接 Shell 执行入口，不经过交互审批。
+- `run_shell`、`git_command` 可执行任意命令；`admin_add_tool` 会写入工具代码；Skill 的 `tools.py` 通过 `exec()` 加载；Hooks 本身也是 Shell 命令。不要加载不可信配置或 Skill。
+- API 未实现身份认证，默认仅绑定 `127.0.0.1`。不要在不可信网络中直接暴露，尤其不要与直接工具调用或 executor 组合暴露。
+- `.env`、`.claxcode/`、虚拟环境和缓存均由 `.gitignore` 排除。`.env` 虽未在当前索引中跟踪，但曾出现在 Git 历史中；其中曾使用的真实密钥必须轮换，不能仅依赖删除文件。
+
+## 部署与已知限制
+
+- 当前部署方式就是本地 editable 安装后用 console script 启动 Uvicorn 或 CLI；没有容器、CI、进程管理或生产部署工具。
+- 数据库仅自动建表，没有 Alembic 等迁移机制；修改 ORM 时需考虑既有本地数据库。
+- MCP 和插件系统仍是 stub，不能当作已可用能力。
+- 无视觉输入、无 `/resume` 会话选择器；CLI 只自动恢复项目最近一次会话。
+- `.claxcode/` 是本地状态，不是源码；调试问题时可检查数据库、快照和审计日志，但不要提交这些文件。

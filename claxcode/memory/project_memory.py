@@ -109,12 +109,22 @@ class ProjectMemory:
             )
             memory = result.scalar_one_or_none()
 
-            if memory:
+            now = datetime.now(UTC)
+            if memory is None:
+                memory = ProjectMemoryORM(
+                    id=str(uuid4()),
+                    project_path=project_path,
+                    initialized_at=now,
+                    config="",
+                    context_summary=summary,
+                    updated_at=now,
+                )
+                db.add(memory)
+            else:
                 memory.context_summary = summary
-                memory.updated_at = datetime.now(UTC)
-                await db.commit()
-                return True
-            return False
+                memory.updated_at = now
+            await db.commit()
+            return True
 
     async def list_all_projects(self, limit: int = 100) -> list[dict[str, Any]]:
         """列出所有项目.

@@ -7,7 +7,7 @@ DEFAULT_STORE_PATH = Path.home() / ".claxcode" / "auto_memory.json"
 
 
 class AutoMemory:
-    """Stores user preferences and project patterns in a JSON file."""
+    """Stores stable global user preferences and facts in a JSON file."""
 
     def __init__(self, store_path: Path | None = None, limit: int = 50):
         self._store_path = store_path or DEFAULT_STORE_PATH
@@ -39,7 +39,7 @@ class AutoMemory:
     def to_prompt_fragment(self) -> str:
         if not self._memories:
             return ""
-        lines = ["# 用户偏好与事实（自动记忆）"]
+        lines = ["# 全局用户偏好与事实（自动记忆）"]
         for k, v in self._memories.items():
             lines.append(f"- {k}: {v}")
         return "\n".join(lines)

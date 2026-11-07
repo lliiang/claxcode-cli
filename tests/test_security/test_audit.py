@@ -31,6 +31,12 @@ def test_read_recent_empty_when_no_log(tmp_path):
     assert logger.read_recent() == []
 
 
+def test_read_recent_nonpositive_limit_returns_empty(tmp_path):
+    logger = AuditLogger(log_path=tmp_path / "audit.jsonl")
+    logger.log_tool_call(uuid4(), "tool", {}, "", allowed=True)
+    assert logger.read_recent(limit=0) == []
+
+
 def test_audit_failure_does_not_raise(tmp_path):
     blocker = tmp_path / "blocker"
     blocker.write_text("x", encoding="utf-8")

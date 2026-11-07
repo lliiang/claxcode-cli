@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from claxcode.config import settings
-from claxcode.tools.base import Tool, attach_image
+from claxcode.tools.base import Tool
 from claxcode.tools.registry import tool
 
 # Lazy import — fail at runtime only if not installed
@@ -174,7 +174,6 @@ class BrowserSession:
     ) -> str:
         page = await self._ensure_page()
         data = await page.screenshot(full_page=full_page, type="png")
-        attach_image(data)  # 视觉模型可直接看到截图
         if return_base64:
             return f"📸 截图 (base64, {len(data)} 字节):\n{base64.b64encode(data).decode()}"
         if not path:
