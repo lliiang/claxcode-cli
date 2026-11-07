@@ -243,7 +243,7 @@ pytest tests/test_core/test_agent_permissions.py
 pytest tests/test_tools/test_file_operations.py -k write
 ```
 
-`pyproject.toml` 设置 `testpaths = ["tests"]`、`asyncio_mode = "auto"`，异步测试无需统一额外装饰器（部分旧测试仍显式使用 `@pytest.mark.asyncio`）。
+`pyproject.toml` 设置 `testpaths = ["tests"]`、`asyncio_mode = "auto"` 和 `asyncio_default_fixture_loop_scope = "function"`，异步测试无需统一额外装饰器（部分旧测试仍显式使用 `@pytest.mark.asyncio`）。
 
 - `tests/conftest.py` 的 `client` fixture 调用 `init_db()`，再用 httpx `ASGITransport` 和 `AsyncClient` 直接测试 FastAPI，不启动真实端口。
 - 测试目录按被测模块分组。新工具、Provider、权限或扩展功能应在相邻测试目录添加同风格测试。

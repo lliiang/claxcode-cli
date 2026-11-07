@@ -4,7 +4,7 @@
 
 ClaxCode is an open-source agentic coding assistant for the terminal, inspired by Claude Code. It supports OpenAI-compatible providers, Anthropic, Ollama and custom HTTP APIs, with local sessions, memories, file snapshots and audit logs.
 
-当前版本：`0.1.0`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
+当前版本：`0.1.1`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
 
 ## 核心特性
 

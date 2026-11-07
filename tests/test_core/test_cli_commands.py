@@ -357,6 +357,10 @@ async def test_inline_shell_interrupt_returns_to_prompt(tmp_path, monkeypatch, c
     await cli._run_shell_inline("test")
     assert "已中止命令" in capsys.readouterr().out
 
+    from claxcode.tools.execution import clear_tool_cancelled
+
+    clear_tool_cancelled()
+
 
 async def test_zero_numeric_arguments_are_rejected(capsys):
     cli = InteractiveCLI(".")

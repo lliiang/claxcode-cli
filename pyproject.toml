@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claxcode"
-version = "0.1.0"
+version = "0.1.1"
 description = "ClaxCode — An agentic coding assistant powered by FastAPI"
 readme = "README.md"
 license = { text = "MIT" }
@@ -44,6 +44,7 @@ packages = ["claxcode"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 
 [tool.ruff]
