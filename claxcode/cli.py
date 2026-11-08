@@ -50,8 +50,13 @@ from claxcode.memory import (
     project_memory,
 )
 from claxcode.memory.auto_memory import auto_memory
-from claxcode.memory.session_store import get_session_messages, save_session_messages
+from claxcode.memory.session_store import (
+    get_session_messages,
+    list_subagent_tasks,
+    save_session_messages,
+)
 from claxcode.security.audit import audit_logger
+from claxcode.subagents.manager import cancel_subagent_task
 from claxcode.tools.registry import registry
 
 try:
@@ -83,15 +88,17 @@ def _split_command(command: str) -> list[str]:
 
 
 def _get_version() -> str:
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    try:
+        if pyproject.is_file():
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            return str(data["project"]["version"])
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        pass
     try:
         return package_version("claxcode")
     except PackageNotFoundError:
-        try:
-            pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-            return str(data["project"]["version"])
-        except (OSError, KeyError, tomllib.TOMLDecodeError):
-            return "未知"
+        return "未知"
 
 
 @dataclass
@@ -194,7 +201,10 @@ class InteractiveCLI:
         while True:
             try:
                 user_input = await self._read_input()
-            except (EOFError, KeyboardInterrupt):
+            except KeyboardInterrupt:
+                print("\n⏹️ 已取消当前输入。使用 /exit 或 Ctrl+D 退出。\n")
+                continue
+            except EOFError:
                 print("\n👋 再见！")
                 break
 
@@ -282,9 +292,12 @@ class InteractiveCLI:
                 elif etype == "message_delta":
                     print(event["content"], end="", flush=True)
                 elif etype == "tool_call":
-                    print(f"\n🔧 调用工具: {event['name']}({json.dumps(event.get('arguments', {}))})")
-                    print("   (按 Ctrl+C 中止工具执行)")
-                elif etype == "tool_result":
+                    print(f"\n🔧 调用工具: {event['name']}")
+                    if self.agent.debug:
+                        arguments = json.dumps(event.get("arguments", {}), ensure_ascii=False)
+                        print(f"   参数: {arguments}")
+                        print("   (按 Ctrl+C 中止工具执行)")
+                elif etype == "tool_result" and self.agent.debug:
                     print(f"📋 结果:\n{event['output'][:500]}{'...' if len(event['output']) > 500 else ''}")
                 elif etype == "debug":
                     self._print_debug(event)
@@ -336,8 +349,10 @@ class InteractiveCLI:
             "/skills": SlashCommand("/skills [list|reload|create]", "技能管理", self._cmd_skills),
             "/config": SlashCommand("/config", "显示当前 LLM 配置", self._cmd_config),
             "/version": SlashCommand("/version", "查看 ClaxCode 版本号", self._cmd_version),
-            "/debug": SlashCommand("/debug", "切换调试模式", self._cmd_debug),
+            "/debug": SlashCommand("/debug [on|off]", "设置详细工具输出", self._cmd_debug),
             "/clear": SlashCommand("/clear", "清除对话上下文", self._cmd_clear),
+            "/tasks": SlashCommand("/tasks", "查看当前会话的子代理任务", self._cmd_tasks),
+            "/cancel": SlashCommand("/cancel [任务ID]", "取消当前进程中的子代理", self._cmd_cancel),
             "/memory": SlashCommand(
                 "/memory [history|list|learn|forget|facts|...]", "记忆管理", self._cmd_memory
             ),
@@ -520,7 +535,20 @@ class InteractiveCLI:
         return False
 
     async def _cmd_debug(self, args: list[str]) -> bool:
-        self._toggle_debug()
+        if not args:
+            state = "开启" if self.agent and self.agent.debug else "关闭"
+            print(f"🐛 详细工具输出: {state}。用法: /debug on 或 /debug off\n")
+            return False
+        action = args[0].lower()
+        if action not in ("on", "off"):
+            print("❌ 用法: /debug [on|off]\n")
+            return False
+        if self.agent is None:
+            print("❌ 代理未初始化。\n")
+            return False
+        self.agent.debug = action == "on"
+        state = "开启" if self.agent.debug else "关闭"
+        print(f"🐛 详细工具输出: {state}\n")
         return False
 
     async def _cmd_clear(self, args: list[str]) -> bool:
@@ -528,6 +556,14 @@ class InteractiveCLI:
             self.agent.context.clear()
         await self._persist_session()
         print("🧹 上下文已清除。\n")
+        return False
+
+    async def _cmd_tasks(self, args: list[str]) -> bool:
+        await self._list_tasks()
+        return False
+
+    async def _cmd_cancel(self, args: list[str]) -> bool:
+        await self._cancel_task(args)
         return False
 
     async def _cmd_memory(self, args: list[str]) -> bool:
@@ -914,6 +950,44 @@ from claxcode.tools.registry import tool
         else:
             print(f"❓ 未知子命令: {subcmd}。用法: /memory [history|list|learn|forget|...]\n")
 
+    async def _list_tasks(self) -> None:
+        tasks = await list_subagent_tasks(self.session_id)
+        if not tasks:
+            print("ℹ️ 当前会话没有子代理任务。\n")
+            return
+        print(f"\n🧵 当前会话任务（{len(tasks)} 条）:")
+        for task in tasks:
+            print(
+                f"  {str(task.id)[:8]} [{task.status.value}] "
+                f"{task.agent_type}: {task.instruction[:60]}"
+            )
+        print("  使用 /cancel <任务ID> 取消正在运行的任务。\n")
+
+    async def _cancel_task(self, args: list[str]) -> None:
+        tasks = await list_subagent_tasks(self.session_id)
+        if args:
+            try:
+                task_id = UUID(args[0])
+            except ValueError:
+                print("❌ 无效任务 ID。\n")
+                return
+            task = next((item for item in tasks if item.id == task_id), None)
+            if task is None:
+                print("❌ 当前会话中不存在该任务。\n")
+                return
+        else:
+            task = next((item for item in tasks if item.status.value == "running"), None)
+            if task is None:
+                print("ℹ️ 没有正在运行的子代理任务。\n")
+                return
+        if task.status.value != "running":
+            print(f"ℹ️ 任务已结束，状态: {task.status.value}\n")
+            return
+        if await cancel_subagent_task(task.id):
+            print(f"⏹️ 已取消任务 {task.id}，部分结果已保留。\n")
+        else:
+            print("❌ 任务不属于当前进程，无法从这里取消。\n")
+
     async def _memory_overview(self) -> None:
         """打印记忆总览：长期记忆、自动记忆、当前会话。"""
         memories = await long_term_memory.list_all(
@@ -1071,13 +1145,6 @@ from claxcode.tools.registry import tool
 
         except Exception as e:
             print(f"❌ 压缩失败: {e}\n")
-
-    def _toggle_debug(self) -> None:
-        if self.agent is None:
-            return
-        self.agent.debug = not self.agent.debug
-        state = "开启" if self.agent.debug else "关闭"
-        print(f"🐛 调试模式: {state}\n")
 
     def _print_debug(self, event: dict) -> None:
         label = event.get("label", "调试")

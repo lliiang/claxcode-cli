@@ -562,3 +562,112 @@ async def test_config_init_uses_domestic_provider_url(tmp_path, monkeypatch):
     content = (tmp_path / ".claxcode" / ".env").read_text(encoding="utf-8")
     assert "LLM_PROVIDER=deepseek" in content
     assert "LLM_BASE_URL=https://api.deepseek.com" in content
+
+
+class _ToolAgent:
+    def __init__(self, debug=False):
+        self.debug = debug
+
+    async def run(self, message):
+        yield {
+            "type": "tool_call",
+            "name": "run_shell",
+            "arguments": {"command": "pwd"},
+        }
+        yield {"type": "tool_result", "name": "run_shell", "output": "详细结果"}
+
+
+async def test_debug_off_shows_only_tool_name(tmp_path, monkeypatch, capsys):
+    cli = InteractiveCLI(str(tmp_path))
+    cli.agent = _ToolAgent(debug=False)
+
+    async def no_persist():
+        return None
+
+    monkeypatch.setattr(cli, "_persist_session", no_persist)
+    await cli._chat("测试")
+    out = capsys.readouterr().out
+    assert "调用工具: run_shell" in out
+    assert "pwd" not in out
+    assert "详细结果" not in out
+    assert "参数:" not in out
+
+
+async def test_debug_on_shows_arguments_and_result(tmp_path, monkeypatch, capsys):
+    cli = InteractiveCLI(str(tmp_path))
+    cli.agent = _ToolAgent(debug=True)
+
+    async def no_persist():
+        return None
+
+    monkeypatch.setattr(cli, "_persist_session", no_persist)
+    await cli._chat("测试")
+    out = capsys.readouterr().out
+    assert '"command": "pwd"' in out
+    assert "详细结果" in out
+
+
+async def test_debug_command_on_off_and_status(tmp_path, capsys):
+    cli = InteractiveCLI(str(tmp_path))
+    cli.agent = _ToolAgent(debug=False)
+    await cli._handle_command("/debug on")
+    assert cli.agent.debug is True
+    await cli._handle_command("/debug off")
+    assert cli.agent.debug is False
+    await cli._handle_command("/debug")
+    await cli._handle_command("/debug invalid")
+    out = capsys.readouterr().out
+    assert "详细工具输出: 关闭" in out
+    assert "用法: /debug [on|off]" in out
+
+
+async def test_ctrl_c_at_empty_prompt_does_not_exit(tmp_path, monkeypatch, capsys):
+    cli = InteractiveCLI(str(tmp_path))
+    answers = [True, False]
+
+    async def no_db_init():
+        return None
+
+    async def no_resume():
+        return 0
+
+    async def fake_input(prompt="❯ ", is_password=False):
+        if answers.pop(0):
+            raise KeyboardInterrupt()
+        return "/exit"
+
+    monkeypatch.setattr("claxcode.cli.init_db", no_db_init)
+    monkeypatch.setattr(cli, "_resume_session", no_resume)
+    monkeypatch.setattr(cli, "_read_input", fake_input)
+    await cli.run()
+    assert "使用 /exit 或 Ctrl+D 退出" in capsys.readouterr().out
+
+
+async def test_tasks_and_cancel_running_subagent(tmp_path, monkeypatch, capsys):
+    import asyncio
+
+    from claxcode.models.subagent import SubagentStatus, SubagentTask
+    from claxcode.subagents.manager import track_subagent
+
+    task = SubagentTask(
+        session_id=InteractiveCLI(str(tmp_path)).session_id,
+        instruction="阻塞任务",
+        status=SubagentStatus.RUNNING,
+    )
+    cli = InteractiveCLI(str(tmp_path))
+    cli.session_id = task.session_id
+
+    async def fake_tasks(session_id):
+        return [task]
+
+    monkeypatch.setattr("claxcode.cli.list_subagent_tasks", fake_tasks)
+    running = asyncio.create_task(asyncio.sleep(60))
+    track_subagent(task.id, running)
+
+    await cli._handle_command("/tasks")
+    await cli._handle_command("/cancel")
+
+    assert running.cancelled()
+    out = capsys.readouterr().out
+    assert "阻塞任务" in out
+    assert "已取消任务" in out

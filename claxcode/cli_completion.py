@@ -49,6 +49,7 @@ COMMAND_ARGUMENTS = {
         ("facts", "自动记忆列表"),
     ],
     "/rollback": [("list", "列出可回滚快照")],
+    "/debug": [("on", "显示详细工具信息"), ("off", "只显示工具名称")],
 }
 _AT_COMPLETION_RE = re.compile(r'(?<![A-Za-z0-9_@])@(?:"([^"]*)|([^\s，。；：、！？]*))$')
 

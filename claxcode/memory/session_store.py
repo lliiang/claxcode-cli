@@ -160,6 +160,18 @@ async def get_subagent_task(task_id: UUID) -> SubagentTask | None:
         return _orm_to_subagent_task(row) if row is not None else None
 
 
+async def list_subagent_tasks(session_id: UUID, limit: int = 20) -> list[SubagentTask]:
+    """List recent subagent tasks belonging to a session."""
+    async with _get_session_maker()() as db:
+        result = await db.execute(
+            select(SubagentTaskORM)
+            .where(SubagentTaskORM.session_id == str(session_id))
+            .order_by(SubagentTaskORM.created_at.desc())
+            .limit(limit)
+        )
+        return [_orm_to_subagent_task(row) for row in result.scalars().all()]
+
+
 async def finish_subagent_task(task_id: UUID, status: SubagentStatus, result_text: str) -> None:
     """Mark a subagent task as completed/failed and store its result."""
     async with _get_session_maker()() as db:

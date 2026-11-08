@@ -64,7 +64,7 @@ class RunShell(Tool):
                 proc.kill()
                 await proc.wait()
             return f"Error: Command timed out after {timeout}s"
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             if proc is not None and proc.returncode is None:
                 proc.kill()
                 await proc.wait()

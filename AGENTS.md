@@ -101,14 +101,15 @@ SQLite 会话/子代理/长期记忆/项目记忆 + 本地 JSON 自动记忆
 - prompt_toolkit 不可用或没有真实控制台时退回普通 `input()`。文件索引最多缓存 5000 个路径，30 秒过期，并排除依赖/缓存目录。`@` 支持模糊文件补全，`/` 支持命令和常用参数补全；输入历史存于 `.claxcode/cli_history`，Enter 提交、Alt+Enter 换行、Ctrl+C 清空非空输入。
 - 每个项目的 `.claxcode/cli_session` 保存最近会话 UUID；每轮结束后保存消息，下次启动自动恢复，`/clear` 清空上下文。会话中没有 `/project` 或 `/init`；根级 `claxcode-cli init` 只记录项目名称、描述和初始化时间，`init --global` 配置全局模型。`claxcode-cli project`/`project list` 列出项目并按编号进入，也可用 `project <目录>` 或 `--project` 直接进入。命令参数支持成对引号和 Windows 路径，覆盖已有 `AGENT.md` 前需要确认。
 - `ask` 模式的交互审批支持 `y`（允许一次）、`a`（本会话始终允许该工具）、`N`（拒绝）；切换 `/mode` 会清空自动批准集合。
-- Ctrl+C 设置全局工具取消标记；长任务（例如 SSH）轮询该标记，Agent 在处理下一条用户消息前重置它。
+- Ctrl+C 在任务运行时取消当前工作，在输入时清空非空内容，空输入不再退出；退出使用 `/exit` 或 Ctrl+D。长任务（例如 SSH）轮询取消标记，子代理使用按任务注册的 asyncio Task 取消，Shell 同时处理键盘中断和 Task 取消。`/tasks` 查看当前会话任务，`/cancel [任务ID]` 取消当前进程中的任务。
+- 详细工具输出默认关闭，只显示工具名称；`/debug on` 显示参数、结果和调试上下文，`/debug off` 恢复简化输出，无参数时查看状态。
 
 ### API 表面
 
 - `POST /sessions`、`GET /sessions`、`GET /sessions/{id}`、`DELETE /sessions/{id}`：会话管理。
 - `POST /sessions/{id}/chat`：SSE 聊天；事件包括 `thinking`、`message_delta`、`tool_call`、`tool_result_start`、`tool_result`、可选 `debug`、`done`。
 - `GET /tools`、`POST /tools/invoke`：列出工具、直接调用工具。
-- `POST /subagents`、`GET /subagents/{task_id}`、`POST /subagents/{task_id}/stream`：创建、查询和流式运行子代理任务。
+- `POST /subagents`、`GET /subagents/{task_id}`、`POST /subagents/{task_id}/stream`、`POST /subagents/{task_id}/cancel`：创建、查询、流式运行和取消子代理任务。取消后状态为 `cancelled`，并保存部分结果。
 - `GET /health`：健康检查。
 
 每次 API 聊天请求都会新建 Agent、从数据库恢复该会话消息，并在流结束后重新保存。FastAPI lifespan 启动时初始化数据库。
@@ -213,7 +214,7 @@ CLI 在导入项目模块前加载模型配置，优先级为 `--env` 指定文�
 - **新 Provider**：继承 `LLMProvider`，在 `get_provider()` 加分支，或在运行时调用 `register_custom_provider()`。
 - **新 Skill**：目录中放置 `SKILL.md`（`# Name`、`## Description`、`## Instructions`，可选 `## Commands`）和可选 `tools.py`。加载顺序为内置 `claxcode/skills/` → 用户 `~/.claxcode/skills/`、`~/.agent/skills/` → 项目 `.claxcode/skills/`、`.agent/skills/`、`skills/`；同名后者覆盖前者。CLI 支持 `/skills create` 和 `/skills reload`。
 - **Hooks**：在 `~/.claxcode/hooks.json` 或项目 `.claxcode/hooks.json` 配置 `PreToolUse`/`PostToolUse`。`match` 是工具名正则；命令从 stdin 收到 JSON，并获得 `CLAXCODE_TOOL_NAME`、`CLAXCODE_TOOL_ARGS`。Pre hook 非零退出会阻止工具；启动失败或 30 秒超时不阻塞主流程。
-- **子代理**：`explore` 和 `planner` 仅开放六个只读搜索/读取工具，分别最多 8 和 5 轮；`executor` 开放全部工具，最多 10 轮。子代理拥有独立上下文。
+- **子代理**：`explore` 和 `planner` 仅开放六个只读搜索/读取工具，分别最多 8 和 5 轮；`executor` 开放全部工具，最多 10 轮。子代理拥有独立上下文；`subagents/manager.py` 注册当前进程的 asyncio Task，支持取消与清理。
 
 ## 开发约定与代码风格
 
@@ -250,7 +251,7 @@ pytest tests/test_tools/test_file_operations.py -k write
 - 测试目录按被测模块分组。新工具、Provider、权限或扩展功能应在相邻测试目录添加同风格测试。
 - 使用 `monkeypatch`、临时目录和假 Provider/会话隔离外部依赖；`pytest-httpx` 可用于出站 HTTP mock。测试不得要求真实 LLM 密钥或公网。
 - 浏览器集成测试只使用本地 `data:` URL；Playwright/Chromium 不可用时跳过。
-- 本次实际验证结果：**209 个测试全部通过**（`209 passed in 9.87s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
+- 本次实际验证结果：**216 个测试全部通过**（`216 passed in 9.52s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
 
 ## 安全注意事项
 

@@ -15,6 +15,7 @@ from claxcode.memory.session_store import (
 from claxcode.models.subagent import SubagentStatus, SubagentTask
 from claxcode.subagents.executor import ExecutorSubagent
 from claxcode.subagents.explore import ExploreSubagent
+from claxcode.subagents.manager import cancel_subagent_task, track_subagent
 from claxcode.subagents.planner import PlannerSubagent
 
 router = APIRouter()
@@ -52,10 +53,13 @@ async def spawn_subagent(
                 if event.get("type") == "result":
                     results.append(event.get("content", ""))
             await finish_subagent_task(task.id, SubagentStatus.COMPLETED, "\n".join(results))
+        except asyncio.CancelledError:
+            results.append("任务已由用户取消")
+            await finish_subagent_task(task.id, SubagentStatus.CANCELLED, "\n".join(results))
         except Exception as exc:
             await finish_subagent_task(task.id, SubagentStatus.FAILED, str(exc))
 
-    asyncio.create_task(run_task())
+    track_subagent(task.id, asyncio.create_task(run_task()))
     return task
 
 
@@ -65,6 +69,18 @@ async def get_subagent(task_id: UUID):
     if task is None:
         raise HTTPException(status_code=404, detail="子代理任务不存在")
     return task
+
+
+@router.post("/{task_id}/cancel", response_model=SubagentTask)
+async def cancel_subagent(task_id: UUID):
+    task = await get_subagent_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="子代理任务不存在")
+    if task.status == SubagentStatus.RUNNING:
+        cancelled = await cancel_subagent_task(task_id)
+        if not cancelled:
+            await finish_subagent_task(task_id, SubagentStatus.CANCELLED, "任务已取消")
+    return await get_subagent_task(task_id) or task
 
 
 @router.post("/{task_id}/stream")

@@ -4,7 +4,7 @@
 
 ClaxCode is an open-source agentic coding assistant for the terminal, inspired by Claude Code. It supports OpenAI-compatible providers, Anthropic, Ollama and custom HTTP APIs, with local sessions, memories, file snapshots and audit logs.
 
-当前版本：`0.1.3`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
+当前版本：`0.1.4`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
 
 ## 核心特性
 
@@ -15,7 +15,7 @@ ClaxCode is an open-source agentic coding assistant for the terminal, inspired b
 - **分层记忆**：会话恢复、全局用户偏好、项目滚动摘要、项目/全局长期记忆。
 - **可扩展**：Skills、Shell Hooks、子代理和自动发现工具。
 - **双前端**：交互式 CLI + FastAPI SSE 服务，支持非交互式脚本调用。
-- **209 个自动化测试**：测试不需要真实 LLM 密钥或公网。
+- **216 个自动化测试**：测试不需要真实 LLM 密钥或公网。
 
 ## 安装
 
@@ -137,7 +137,8 @@ claxcode-cli --version
 - `@path`：引用项目内文本文件；支持模糊补全、中文路径和 `@"带 空格的路径"`。
 - `!command`：直接执行 Shell；Ctrl+C 中止并返回输入提示。
 - `#text`：保存一条全局自动记忆。
-- Enter 提交，Alt+Enter 换行；Ctrl+C 清空非空输入，空输入时退出。
+- Enter 提交，Alt+Enter 换行；Ctrl+C 取消运行中的任务或清空非空输入，空输入时不退出。
+- 使用 `/exit` 或 Ctrl+D 退出；`/tasks` 查看子代理，`/cancel [任务ID]` 取消当前进程中的任务。
 - `/` 补全内置命令、技能命令和常用参数。
 
 ## 权限与安全
@@ -169,6 +170,8 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | `/config` | 查看当前模型与运行配置 |
 | `/mode [mode]` | 查看或切换权限模式 |
 | `/clear` | 清除当前会话上下文 |
+| `/tasks` | 查看当前会话的子代理任务 |
+| `/cancel [任务ID]` | 取消当前进程中的运行任务，保留部分结果 |
 | `/memory` | 查看记忆总览 |
 | `/memory list\|search\|learn\|forget` | 管理长期记忆和全局自动记忆 |
 | `/compact` | 保存本次总结并融合更新项目滚动摘要 |
@@ -176,7 +179,7 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | `/tools` | 列出全部工具 |
 | `/rollback [n\|list]` | 快照列表或回滚 |
 | `/audit [n]` | 查看审计日志 |
-| `/debug` | 切换调试输出 |
+| `/debug [on\|off]` | 默认仅显示工具名；on 显示参数、结果和调试上下文 |
 | `/exit` `/quit` | 退出 |
 
 项目只能在顶层选择。运行 `claxcode-cli project` 或 `claxcode-cli project list` 会列出项目，输入编号即可进入；也可用 `claxcode-cli project <目录>` 或 `--project <目录>` 直接进入。会话中不再提供 `/project` 命令。
@@ -257,6 +260,7 @@ GET /health -> ok
 - `POST /sessions/{id}/chat`：SSE 流式聊天
 - `GET /tools`、`POST /tools/invoke`
 - `POST /subagents`、`GET /subagents/{id}`、`POST /subagents/{id}/stream`
+- `POST /subagents/{id}/cancel`：协作式取消任务并保存 `cancelled` 状态与部分结果
 
 ## 当前限制与计划
 

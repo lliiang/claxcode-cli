@@ -100,6 +100,7 @@ def test_subcommand_completion(project):
     assert "learn" in results
     assert "forget" in results
     assert _completions(completer, "/config ") == []
+    assert _completions(completer, "/debug ") == ["on", "off"]
 
 
 def test_quoted_file_completion_supports_spaces_and_chinese(project):
