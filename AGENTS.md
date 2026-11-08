@@ -33,7 +33,7 @@ ClaxCode 是一个用 Python 编写的开源、自托管 Agentic 编程助手，
 | `.env.example` | 最小环境变量模板；复制为 `.env` 后填写 Provider 和密钥 |
 | `claxcode/config.py` | 全部环境驱动设置；`.env` 中未知变量会被忽略 |
 | `README.md` | 中文使用说明、功能介绍和示例 |
-| `CLAUDE.md` | 注入 Agent 的项目上下文；当前是 `/init` 生成的基本模板 |
+| `AGENT.md` | 注入 Agent 的项目上下文；由根级 `claxcode-cli init` 生成 |
 | `.claxcode/` | 本地运行时状态：数据库、快照、审计日志、CLI 会话指针等，不应提交 |
 
 仓库没有 `package.json`、锁文件、Makefile 或 Dockerfile。`.github/workflows/publish.yml` 提供 PyPI 发布 CI：推送 `v*` 标签或手动触发，运行测试和构建后通过 OIDC 发布，使用 GitHub 环境 `pypi`。
@@ -99,7 +99,7 @@ SQLite 会话/子代理/长期记忆/项目记忆 + 本地 JSON 自动记忆
 
 - `!cmd`：直接调用 `run_shell`，Ctrl+C 会终止子进程并返回提示；`@path` 或 `@"带 空格的路径"`：把项目内 UTF-8 文本文件内容（最多 8000 字符）附加到提示，重复引用只内联一次，加载失败会在 stderr 给出原因；`#text`：写入自动记忆。
 - prompt_toolkit 不可用或没有真实控制台时退回普通 `input()`。文件索引最多缓存 5000 个路径，30 秒过期，并排除依赖/缓存目录。`@` 支持模糊文件补全，`/` 支持命令和常用参数补全；输入历史存于 `.claxcode/cli_history`，Enter 提交、Alt+Enter 换行、Ctrl+C 清空非空输入。
-- 每个项目的 `.claxcode/cli_session` 保存最近会话 UUID；每轮结束后保存消息，下次启动自动恢复，`/clear` 清空上下文。`/project switch` 会保存旧会话，重建项目 Agent、Skills、Hooks 和补全，再恢复目标项目会话；命令参数支持成对引号和 Windows 路径。`/init` 覆盖已有 `CLAUDE.md` 前需要确认。
+- 每个项目的 `.claxcode/cli_session` 保存最近会话 UUID；每轮结束后保存消息，下次启动自动恢复，`/clear` 清空上下文。会话中没有 `/project` 或 `/init`；根级 `claxcode-cli init` 只记录项目名称、描述和初始化时间，`init --global` 配置全局模型。`claxcode-cli project`/`project list` 列出项目并按编号进入，也可用 `project <目录>` 或 `--project` 直接进入。命令参数支持成对引号和 Windows 路径，覆盖已有 `AGENT.md` 前需要确认。
 - `ask` 模式的交互审批支持 `y`（允许一次）、`a`（本会话始终允许该工具）、`N`（拒绝）；切换 `/mode` 会清空自动批准集合。
 - Ctrl+C 设置全局工具取消标记；长任务（例如 SSH）轮询该标记，Agent 在处理下一条用户消息前重置它。
 
@@ -133,7 +133,7 @@ claxcode/
 │   ├── session_store.py    # SQLAlchemy ORM、init_db、会话和子代理持久化
 │   ├── long_term.py        # 长期记忆检索、导入导出等
 │   ├── project_memory.py   # 项目记录与摘要
-│   ├── project_context.py  # CLAUDE.md / .claxcode/context.md 加载
+│   ├── project_context.py  # AGENT.md / .claxcode/context.md 加载
 │   └── auto_memory.py      # ~/.claxcode/auto_memory.json，最多 50 条
 ├── extensions/
 │   ├── skills.py           # Skill 加载、覆盖、命令和 tools.py 动态注册
@@ -178,10 +178,10 @@ tests/                      # 按 api/core/tools/memory/security/extensions 分�
 - 默认数据库为 `./.claxcode/claxcode.db`。会话消息以 JSON 存在 `sessions.messages`，系统提示不持久化。
 - `ContextManager.restore()` 会清理不完整的工具调用/结果配对，避免 Provider 拒绝孤立消息。
 - Token 数是粗略字符估算（`len(text) // 3 + 1`）。超过阈值时，主 Agent 调用 LLM 总结最旧的一半消息；新增消息时的硬上限保护会直接丢弃最旧消息。
-- 系统提示可由 `~/.claxcode/system_prompt.md` 覆盖；项目上下文依次尝试 `CLAUDE.md`、`.claxcode/context.md`。
+- 系统提示可由 `~/.claxcode/system_prompt.md` 覆盖；项目上下文依次尝试 `AGENT.md`、`.claxcode/context.md`。
 - 记忆职责分层：`~/.claxcode/auto_memory.json` 只保存稳定的全局用户偏好/事实；长期记忆保存项目或全局历史事件；项目记忆保存滚动状态摘要。自动记忆和长期记忆每轮动态刷新，避免当前会话写入后不生效或重复注入。
 - 长期记忆检索使用“当前项目 + 全局”作用域，支持中文词语与二字片段相关性排序，无匹配时退回少量近期记忆；项目路径在写入和查询时统一标准化。
-- `/compact` 分别生成本次总结与融合旧状态的项目滚动摘要，写入长期记忆和项目记忆后立即持久化清空后的会话；项目未 `/init` 时也会自动创建摘要记录。
+- `/compact` 分别生成本次总结与融合旧状态的项目滚动摘要，写入长期记忆和项目记忆后立即持久化清空后的会话；项目未初始化时也会自动创建摘要记录。
 
 ## 环境变量
 
@@ -196,7 +196,7 @@ tests/                      # 按 api/core/tools/memory/security/extensions 分�
 | `LLM_CUSTOM_CONFIG` | 空字符串 | JSON；用于 Ollama 选项或自定义 HTTP 模板 |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./.claxcode/claxcode.db` | SQLAlchemy 异步连接串 |
 | `SNAPSHOTS_DIR` | `./.claxcode/snapshots` | 写前快照目录 |
-| `PROJECT_CONTEXT_FILE` | `CLAUDE.md` | 项目上下文文件名 |
+| `PROJECT_CONTEXT_FILE` | `AGENT.md` | 项目上下文文件名 |
 | `PERMISSION_MODE` | `ask` | `ask` / `auto_edit` / `plan` / `auto_safe` / `yolo` |
 | `MAX_CONTEXT_TOKENS` | `128000` | 粗略上下文预算 |
 | `CONTEXT_COMPRESSION_THRESHOLD` | `0.85` | 触发压缩的预算比例 |
@@ -205,7 +205,7 @@ tests/                      # 按 api/core/tools/memory/security/extensions 分�
 | `TOOL_TIMEOUT` | `60` | 工具相关默认超时配置 |
 | `BROWSER_HEADLESS` | `true` | 新浏览器会话的默认模式 |
 
-CLI 在导入项目模块前加载模型配置，优先级为 `--env` 指定文件 > 当前目录 `.env` > `~/.claxcode/.env`；修改 CLI 的导入顺序时保留这一约束（ruff 对 `cli.py` 特意忽略 E402）。根级命令 `claxcode-cli init` 可交互创建全局配置，API Key 使用隐藏输入，覆盖已有文件前需确认；它与交互式 `/init` 的项目初始化不同。版本可通过 `/version` 或 `claxcode-cli --version/-v` 查看。
+CLI 在导入项目模块前加载模型配置，优先级为 `--env` 指定文件 > 当前目录 `.env` > `~/.claxcode/.env`；修改 CLI 的导入顺序时保留这一约束（ruff 对 `cli.py` 特意忽略 E402）。`claxcode-cli init --global` 交互创建全局配置，API Key 使用隐藏输入，覆盖已有文件前需确认；不带 `--global` 时只询问项目描述并初始化当前目录。版本可通过 `/version` 或 `claxcode-cli --version/-v` 查看。
 
 ## 扩展点
 
@@ -250,7 +250,7 @@ pytest tests/test_tools/test_file_operations.py -k write
 - 测试目录按被测模块分组。新工具、Provider、权限或扩展功能应在相邻测试目录添加同风格测试。
 - 使用 `monkeypatch`、临时目录和假 Provider/会话隔离外部依赖；`pytest-httpx` 可用于出站 HTTP mock。测试不得要求真实 LLM 密钥或公网。
 - 浏览器集成测试只使用本地 `data:` URL；Playwright/Chromium 不可用时跳过。
-- 本次实际验证结果：**205 个测试全部通过**（`205 passed in 9.26s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
+- 本次实际验证结果：**209 个测试全部通过**（`209 passed in 9.87s`）。README 内其他测试数量是历史值，以 pytest 实际收集结果为准。
 
 ## 安全注意事项
 

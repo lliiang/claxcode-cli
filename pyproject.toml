@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claxcode"
-version = "0.1.2"
+version = "0.1.3"
 description = "ClaxCode — An agentic coding assistant powered by FastAPI"
 readme = "README.md"
 license = { text = "MIT" }

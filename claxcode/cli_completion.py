@@ -36,7 +36,6 @@ COMMAND_ARGUMENTS = {
         ("reload", "重新加载技能"),
         ("create", "创建项目技能"),
     ],
-    "/project": [("list", "列出项目"), ("switch", "切换项目"), ("info", "当前项目信息")],
     "/memory": [
         ("overview", "记忆总览"),
         ("history", "当前会话历史"),

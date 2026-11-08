@@ -7,10 +7,11 @@ import json
 import re
 import shlex
 import sys
+import tomllib
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -49,7 +50,6 @@ from claxcode.memory import (
     project_memory,
 )
 from claxcode.memory.auto_memory import auto_memory
-from claxcode.memory.project_context import load_project_context
 from claxcode.memory.session_store import get_session_messages, save_session_messages
 from claxcode.security.audit import audit_logger
 from claxcode.tools.registry import registry
@@ -86,7 +86,12 @@ def _get_version() -> str:
     try:
         return package_version("claxcode")
     except PackageNotFoundError:
-        return "未知"
+        try:
+            pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            return str(data["project"]["version"])
+        except (OSError, KeyError, tomllib.TOMLDecodeError):
+            return "未知"
 
 
 @dataclass
@@ -333,11 +338,9 @@ class InteractiveCLI:
             "/version": SlashCommand("/version", "查看 ClaxCode 版本号", self._cmd_version),
             "/debug": SlashCommand("/debug", "切换调试模式", self._cmd_debug),
             "/clear": SlashCommand("/clear", "清除对话上下文", self._cmd_clear),
-            "/project": SlashCommand("/project [list|switch|info]", "项目管理", self._cmd_project),
             "/memory": SlashCommand(
                 "/memory [history|list|learn|forget|facts|...]", "记忆管理", self._cmd_memory
             ),
-            "/init": SlashCommand("/init", "初始化项目信息", self._cmd_init),
             "/compact": SlashCommand("/compact", "压缩会话到长期记忆", self._cmd_compact),
             "/audit": SlashCommand("/audit [n]", "查看最近 n 条审计日志", self._cmd_audit),
             "/rollback": SlashCommand("/rollback [n|list]", "回滚文件编辑快照", self._cmd_rollback),
@@ -527,16 +530,8 @@ class InteractiveCLI:
         print("🧹 上下文已清除。\n")
         return False
 
-    async def _cmd_project(self, args: list[str]) -> bool:
-        await self._handle_project_command(args)
-        return False
-
     async def _cmd_memory(self, args: list[str]) -> bool:
         await self._handle_memory_command(args)
-        return False
-
-    async def _cmd_init(self, args: list[str]) -> bool:
-        await self._handle_init_command()
         return False
 
     async def _cmd_compact(self, args: list[str]) -> bool:
@@ -787,86 +782,29 @@ from claxcode.tools.registry import tool
   工具超时:         {settings.tool_timeout}秒
 """)
 
-    async def _handle_project_command(self, args: list[str]) -> None:
-        """处理 /project 命令."""
-        subcmd = args[0] if args else "info"
-
-        if subcmd == "list":
-            projects = await project_memory.list_all_projects()
-            if not projects:
-                print("ℹ️ 没有找到已初始化的项目。\n")
-                return
-            print("\n📁 已初始化的项目:")
-            for p in projects:
-                name = p.get("name", "未知")
-                path = p.get("project_path", "")
-                updated = p.get("updated_at", "")[:10]
-                has_summary = "✓" if p.get("has_summary") else " "
-                print(f"  [{has_summary}] {name}")
-                print(f"      路径: {path}")
-                print(f"      更新: {updated}")
+    async def _select_project(self) -> Path | None:
+        """List known projects and return the one selected by number."""
+        projects = await project_memory.list_all_projects()
+        if not projects:
+            print("ℹ️ 暂无已初始化项目，请先运行 claxcode-cli init。\n")
+            return None
+        print("\n📁 项目列表:")
+        for index, project in enumerate(projects, 1):
+            print(f"  {index}. {project.get('name', '未命名')} · {project['project_path']}")
+            if project.get("description"):
+                print(f"     {project['description']}")
+        try:
+            answer = await self._read_input("输入编号进入项目（q 取消）: ")
+        except (EOFError, KeyboardInterrupt):
             print()
-
-        elif subcmd == "switch":
-            if len(args) < 2:
-                print("❌ 用法: /project switch <项目路径>\n")
-                return
-            new_path = args[1]
-            path_obj = Path(new_path).resolve()
-            if not path_obj.is_dir():
-                print(f"❌ 项目目录不存在: {new_path}\n")
-                return
-            await self._persist_session()
-            debug = self.agent.debug if self.agent else None
-            has_agent = self.agent is not None
-            self.project_path = path_obj
-            self._auto_approved.clear()
-            self.skill_manager = SkillManager()
-            self._load_skills()
-            self._prompt_session = self._create_prompt_session()
-            self.session_id = uuid4()
-            restored = 0
-            if has_agent:
-                self.agent = Agent(
-                    session_id=self.session_id,
-                    project_path=str(self.project_path),
-                    permission_mode=self.permission_mode,
-                    skill_manager=self.skill_manager,
-                    debug=debug,
-                    approval_callback=self._approve_tool,
-                )
-                restored = await self._resume_session()
-            else:
-                self.agent = None
-            print(f"✅ 已切换到项目: {self.project_path}")
-            if restored:
-                print(f"💾 已恢复项目会话（{restored} 条消息）。")
-            print()
-
-        elif subcmd == "info":
-            # 显示当前项目信息
-            project = await project_memory.get_project(str(self.project_path))
-            if project:
-                config = project.get("config", {})
-                print("\n📁 项目信息:")
-                print(f"  名称: {config.get('name', '未命名')}")
-                print(f"  路径: {project.get('project_path', '')}")
-                print(f"  描述: {config.get('description', '无')}")
-                print(f"  技术栈: {config.get('tech_stack', '未指定')}")
-                print(f"  初始化时间: {project.get('initialized_at', '')[:10]}")
-                if project.get("context_summary"):
-                    print(f"  摘要: {project['context_summary'][:100]}...")
-                print()
-            else:
-                # 显示 CLAUDE.md 或提示未初始化
-                ctx = load_project_context(self.project_path)
-                if ctx:
-                    print(f"📄 项目上下文:\n{ctx}\n")
-                else:
-                    print("ℹ️ 项目未初始化。使用 /init 初始化项目。\n")
-
-        else:
-            print(f"❓ 未知子命令: {subcmd}。用法: /project [list|switch|info]\n")
+            return None
+        if answer.strip().lower() == "q":
+            print("已取消。\n")
+            return None
+        if not answer.isdigit() or not 1 <= int(answer) <= len(projects):
+            print("❌ 无效项目编号。\n")
+            return None
+        return Path(projects[int(answer) - 1]["project_path"])
 
     async def _handle_memory_command(self, args: list[str]) -> None:
         """处理 /memory 命令."""
@@ -1014,45 +952,33 @@ from claxcode.tools.registry import tool
             print(f"  {icon} {content.replace(chr(10), ' ')[:80]}")
         print()
 
-    async def _handle_init_command(self) -> None:
-        """处理 /init 命令 - 初始化项目."""
-        context_file = self.project_path / "CLAUDE.md"
+    async def _init_project(self) -> None:
+        """Initialize the current project with a short description."""
+        context_file = self.project_path / "AGENT.md"
         try:
             if context_file.exists():
                 answer = await self._read_input(f"⚠️ {context_file.name} 已存在，覆盖? [y/N] ")
                 if answer.strip().lower() not in ("y", "yes"):
                     print("已取消，保留现有项目上下文。\n")
                     return
-
-            print("\n📝 初始化项目信息")
-            print("-" * 40)
-            name = await self._read_input(f"项目名称 [{self.project_path.name}]: ")
-            description = await self._read_input("项目描述: ")
-            tech_stack = await self._read_input("技术栈 (如: Python, FastAPI, React): ")
-            build_command = await self._read_input("构建命令 (如: npm run build): ")
-            test_command = await self._read_input("测试命令 (如: pytest): ")
-            code_style = await self._read_input("代码风格偏好: ")
-            notes = await self._read_input("其他说明: ")
+            description = await self._read_input("项目描述（可留空）: ")
         except (EOFError, KeyboardInterrupt):
             print("\n已取消项目初始化。\n")
             return
 
         config = {
-            "name": name.strip() or self.project_path.name,
+            "name": self.project_path.name,
             "description": description.strip(),
-            "tech_stack": tech_stack.strip(),
-            "build_command": build_command.strip(),
-            "test_command": test_command.strip(),
-            "code_style": code_style.strip(),
-            "notes": notes.strip(),
+            "initialized_at": datetime.now(UTC).isoformat(),
         }
+        await init_db()
         memory_id = await project_memory.init_project(str(self.project_path), config)
         content = project_memory.generate_context_md(config)
         context_file.write_text(content, encoding="utf-8")
 
         print("\n✅ 项目已初始化!")
         print(f"   ID: {memory_id}")
-        print(f"   CLAUDE.md 已创建: {context_file}\n")
+        print(f"   AGENT.md 已创建: {context_file}\n")
 
     async def _handle_compact_command(self) -> None:
         """处理 /compact 命令 - 压缩会话."""
@@ -1208,13 +1134,38 @@ def main() -> None:
         help="非交互模式：执行单条指令后退出（工具日志走 stderr）",
     )
     subcommands = parser.add_subparsers(dest="command")
-    subcommands.add_parser("init", help="交互式创建全局模型配置")
+    init_parser = subcommands.add_parser("init", help="初始化当前项目或全局模型配置")
+    init_parser.add_argument(
+        "--global", dest="global_config", action="store_true", help="配置全局模型"
+    )
+    project_parser = subcommands.add_parser("project", help="选择项目并启动")
+    project_parser.add_argument("path", nargs="?", help="项目目录，或 list 编号选择")
     args = parser.parse_args()
 
     project_path = Path(args.project).resolve()
+    if args.command == "project" and args.path not in (None, "list"):
+        project_path = Path(args.path).resolve()
+        if not project_path.is_dir():
+            parser.error(f"项目目录不存在: {project_path}")
     cli = InteractiveCLI(project_path=str(project_path), permission_mode=args.mode)
     if args.command == "init":
-        asyncio.run(cli._init_global_config())
+        if args.global_config:
+            asyncio.run(cli._init_global_config())
+        else:
+            asyncio.run(cli._init_project())
+    elif args.command == "project":
+        async def run_project() -> None:
+            await init_db()
+            selected_path = project_path
+            if args.path in (None, "list"):
+                selected = await cli._select_project()
+                if selected is None:
+                    return
+                selected_path = selected
+            selected_cli = InteractiveCLI(str(selected_path), args.mode)
+            await selected_cli.run()
+
+        asyncio.run(run_project())
     elif args.one_shot:
         asyncio.run(cli.one_shot(args.one_shot))
     else:

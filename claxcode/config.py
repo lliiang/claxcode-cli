@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Storage
     database_url: str = "sqlite+aiosqlite:///./.claxcode/claxcode.db"
     snapshots_dir: Path = Path("./.claxcode/snapshots")
-    project_context_file: str = "CLAUDE.md"
+    project_context_file: str = "AGENT.md"
 
     # Security
     permission_mode: str = "ask"  # ask | auto_edit | plan | auto_safe | yolo

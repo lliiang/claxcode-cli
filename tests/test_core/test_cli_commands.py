@@ -1,5 +1,7 @@
 """Tests for the CLI slash-command dispatch table and skill command routing."""
 
+from pathlib import Path
+
 from claxcode.cli import InteractiveCLI
 
 
@@ -7,9 +9,11 @@ def test_command_table_contains_all_builtin_commands():
     cli = InteractiveCLI(".")
     expected = {
         "/help", "/tools", "/mode", "/skills", "/config", "/debug", "/clear",
-        "/project", "/memory", "/init", "/compact", "/audit", "/exit", "/quit",
+        "/memory", "/compact", "/audit", "/exit", "/quit",
     }
     assert expected <= set(cli._command_table.keys())
+    assert "/init" not in cli._command_table
+    assert "/project" not in cli._command_table
 
 
 async def test_unknown_command_prints_hint(capsys):
@@ -173,16 +177,6 @@ def test_expand_mentions_marks_truncation(tmp_path):
     assert "[内容已截断]" in out
 
 
-async def test_project_switch_recreates_prompt_session(tmp_path, monkeypatch):
-    target = tmp_path / "target"
-    target.mkdir()
-    cli = InteractiveCLI(str(tmp_path))
-    marker = object()
-    monkeypatch.setattr(cli, "_create_prompt_session", lambda: marker)
-    await cli._handle_command(f"/project switch {target}")
-    assert cli._prompt_session is marker
-
-
 async def test_prompt_supports_multiline_and_ctrl_c_clear(tmp_path, monkeypatch):
     import asyncio
 
@@ -287,30 +281,14 @@ async def test_unclosed_command_quote_shows_error(capsys):
     assert "引号不完整" in capsys.readouterr().out
 
 
-async def test_project_switch_rebuilds_agent_and_restores_target(tmp_path):
-    from claxcode.core.agent import Agent
-    from claxcode.memory import init_db
-
-    await init_db()
-    source = tmp_path / "source"
-    target = tmp_path / "target with spaces"
-    source.mkdir()
-    target.mkdir()
-    (source / "CLAUDE.md").write_text("SOURCE_CONTEXT", encoding="utf-8")
-    (target / "CLAUDE.md").write_text("TARGET_CONTEXT", encoding="utf-8")
-    cli = InteractiveCLI(str(source))
-    old_agent = Agent(session_id=cli.session_id, project_path=str(source))
-    cli.agent = old_agent
-
-    await cli._handle_command(f'/project switch "{target}"')
-
-    assert cli.agent is not old_agent
-    assert cli.agent is not None
-    assert "TARGET_CONTEXT" in cli.agent._base_system_prompt
-    assert "SOURCE_CONTEXT" not in cli.agent._base_system_prompt
-    assert cli.agent.session_id == cli.session_id
-    state_file = target / ".claxcode" / "cli_session"
-    assert state_file.read_text(encoding="utf-8") == str(cli.session_id)
+async def test_all_session_project_commands_are_removed(tmp_path, capsys):
+    cli = InteractiveCLI(str(tmp_path))
+    original_path = cli.project_path
+    await cli._handle_command("/project")
+    await cli._handle_command("/project list")
+    await cli._handle_command("/project switch /somewhere")
+    assert cli.project_path == original_path
+    assert capsys.readouterr().out.count("未知命令") == 3
 
 
 async def test_skills_reload_replaces_prompt_fragment(tmp_path):
@@ -330,7 +308,7 @@ async def test_skills_reload_replaces_prompt_fragment(tmp_path):
 
 
 async def test_init_cancel_preserves_existing_context(tmp_path, monkeypatch, capsys):
-    context = tmp_path / "CLAUDE.md"
+    context = tmp_path / "AGENT.md"
     context.write_text("KEEP_EXISTING_CONTEXT", encoding="utf-8")
     cli = InteractiveCLI(str(tmp_path))
 
@@ -342,9 +320,41 @@ async def test_init_cancel_preserves_existing_context(tmp_path, monkeypatch, cap
 
     monkeypatch.setattr(cli, "_read_input", reject)
     monkeypatch.setattr("claxcode.cli.project_memory.init_project", fail_init)
-    await cli._handle_command("/init")
+    await cli._init_project()
     assert context.read_text(encoding="utf-8") == "KEEP_EXISTING_CONTEXT"
     assert "已取消" in capsys.readouterr().out
+
+
+async def test_project_init_asks_only_description(tmp_path, monkeypatch):
+    cli = InteractiveCLI(str(tmp_path))
+    prompts = []
+    saved = {}
+
+    async def fake_input(prompt, is_password=False):
+        prompts.append(prompt)
+        return "一个测试项目"
+
+    async def no_db_init():
+        return None
+
+    async def fake_init_project(project_path, config):
+        saved.update(config)
+        return "project-id"
+
+    monkeypatch.setattr(cli, "_read_input", fake_input)
+    monkeypatch.setattr("claxcode.cli.init_db", no_db_init)
+    monkeypatch.setattr("claxcode.cli.project_memory.init_project", fake_init_project)
+    await cli._init_project()
+
+    assert len(prompts) == 1
+    assert saved["description"] == "一个测试项目"
+    assert saved["name"] == tmp_path.name
+    assert saved["initialized_at"]
+    assert "tech_stack" not in saved
+    content = (tmp_path / "AGENT.md").read_text(encoding="utf-8")
+    assert "一个测试项目" in content
+    assert saved["initialized_at"] in content
+    assert "## 技术栈" not in content
 
 
 async def test_inline_shell_interrupt_returns_to_prompt(tmp_path, monkeypatch, capsys):
@@ -439,7 +449,7 @@ async def test_config_init_cancel_preserves_existing_env(tmp_path, monkeypatch):
     assert config_file.read_text(encoding="utf-8") == "KEEP_EXISTING_CONFIG"
 
 
-def test_root_init_subcommand_starts_global_config(monkeypatch):
+def test_root_init_global_flag_starts_global_config(monkeypatch):
     from claxcode.cli import main
 
     called = []
@@ -448,9 +458,75 @@ def test_root_init_subcommand_starts_global_config(monkeypatch):
         called.append(True)
 
     monkeypatch.setattr("claxcode.cli.InteractiveCLI._init_global_config", fake_init)
-    monkeypatch.setattr("sys.argv", ["claxcode-cli", "init"])
+    monkeypatch.setattr("sys.argv", ["claxcode-cli", "init", "--global"])
     main()
     assert called == [True]
+
+
+def test_root_init_defaults_to_project(monkeypatch):
+    from claxcode.cli import main
+
+    called = []
+
+    async def fake_init(self):
+        called.append(self.project_path)
+
+    monkeypatch.setattr("claxcode.cli.InteractiveCLI._init_project", fake_init)
+    monkeypatch.setattr("sys.argv", ["claxcode-cli", "init"])
+    main()
+    assert called == [Path.cwd()]
+
+
+def test_root_project_command_starts_selected_directory(tmp_path, monkeypatch):
+    from claxcode.cli import main
+
+    called = []
+
+    async def fake_run(self):
+        called.append(self.project_path)
+
+    monkeypatch.setattr("claxcode.cli.InteractiveCLI.run", fake_run)
+    monkeypatch.setattr("sys.argv", ["claxcode-cli", "project", str(tmp_path)])
+    main()
+    assert called == [tmp_path.resolve()]
+
+
+def test_root_project_list_selects_by_number(tmp_path, monkeypatch, capsys):
+    from claxcode.cli import main
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    called = []
+
+    async def fake_projects():
+        return [
+            {"name": "first", "project_path": str(first), "description": "项目一"},
+            {"name": "second", "project_path": str(second), "description": "项目二"},
+        ]
+
+    async def no_db_init():
+        return None
+
+    async def choose(self, prompt, is_password=False):
+        return "2"
+
+    async def fake_run(self):
+        called.append(self.project_path)
+
+    monkeypatch.setattr("claxcode.cli.project_memory.list_all_projects", fake_projects)
+    monkeypatch.setattr("claxcode.cli.init_db", no_db_init)
+    monkeypatch.setattr("claxcode.cli.InteractiveCLI._read_input", choose)
+    monkeypatch.setattr("claxcode.cli.InteractiveCLI.run", fake_run)
+    monkeypatch.setattr("sys.argv", ["claxcode-cli", "project", "list"])
+    main()
+
+    assert called == [second.resolve()]
+    out = capsys.readouterr().out
+    assert "1. first" in out
+    assert "2. second" in out
+    assert "项目二" in out
 
 
 async def test_chat_model_error_returns_control(tmp_path, monkeypatch, capsys):

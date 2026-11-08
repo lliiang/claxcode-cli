@@ -3,6 +3,8 @@
 import json
 import subprocess
 import sys
+import tomllib
+from pathlib import Path
 
 
 def test_explicit_env_is_loaded_before_settings(tmp_path):
@@ -34,14 +36,15 @@ module.main()
 
 
 def test_version_flag():
-    from importlib.metadata import version
-
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    expected = pyproject["project"]["version"]
     result = subprocess.run(
         [sys.executable, "-m", "claxcode.cli", "--version"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert version("claxcode") in result.stdout
+    assert expected in result.stdout

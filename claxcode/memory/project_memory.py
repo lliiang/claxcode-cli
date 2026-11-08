@@ -29,33 +29,37 @@ class ProjectMemory:
         Returns:
             项目记忆ID
         """
-        # 确保路径标准化
         project_path = str(Path(project_path).resolve())
+        config = dict(config)
+        now = datetime.now(UTC)
 
         async for db in get_db_session():
             db: AsyncSession
-            # 检查是否已存在
             result = await db.execute(
                 select(ProjectMemoryORM).where(ProjectMemoryORM.project_path == project_path)
             )
             existing = result.scalar_one_or_none()
 
             if existing:
-                # 更新现有配置
+                previous = json.loads(existing.config) if existing.config else {}
+                initialized_at = (
+                    previous.get("initialized_at") or existing.initialized_at.isoformat()
+                )
+                config.setdefault("initialized_at", initialized_at)
                 existing.config = json.dumps(config, ensure_ascii=False)
-                existing.updated_at = datetime.now(UTC)
+                existing.updated_at = now
                 await db.commit()
                 return existing.id
             else:
-                # 创建新的项目记忆
+                config.setdefault("initialized_at", now.isoformat())
                 memory_id = str(uuid4())
                 memory = ProjectMemoryORM(
                     id=memory_id,
                     project_path=project_path,
-                    initialized_at=datetime.now(UTC),
+                    initialized_at=now,
                     config=json.dumps(config, ensure_ascii=False),
                     context_summary="",
-                    updated_at=datetime.now(UTC),
+                    updated_at=now,
                 )
                 db.add(memory)
                 await db.commit()
@@ -148,6 +152,9 @@ class ProjectMemory:
                     "id": m.id,
                     "project_path": m.project_path,
                     "name": Path(m.project_path).name,
+                    "description": (
+                        json.loads(m.config).get("description", "") if m.config else ""
+                    ),
                     "initialized_at": m.initialized_at.isoformat(),
                     "updated_at": m.updated_at.isoformat(),
                     "has_summary": bool(m.context_summary),
@@ -156,7 +163,7 @@ class ProjectMemory:
             ]
 
     def generate_context_md(self, config: dict[str, Any]) -> str:
-        """生成 CLAUDE.md 文件内容.
+        """生成 AGENT.md 文件内容.
 
         Args:
             config: 项目配置
@@ -168,26 +175,11 @@ class ProjectMemory:
             f"# {config.get('name', '未命名项目')}",
             "",
             "## 项目描述",
-            config.get('description', ''),
-            "",
-            "## 技术栈",
-            config.get('tech_stack', ''),
-            "",
-            "## 常用命令",
-            "",
-            "### 构建",
-            f"```bash\n{config.get('build_command', '')}\n```",
-            "",
-            "### 测试",
-            f"```bash\n{config.get('test_command', '')}\n```",
-            "",
-            "## 代码风格",
-            config.get('code_style', ''),
-            "",
-            "## 其他说明",
-            config.get('notes', ''),
+            config.get("description") or "暂无描述。",
         ]
-        return "\n".join(lines)
+        if config.get("initialized_at"):
+            lines.extend(["", "## 初始化时间", config["initialized_at"]])
+        return "\n".join(lines) + "\n"
 
 
 # 全局实例

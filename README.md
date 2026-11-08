@@ -4,7 +4,7 @@
 
 ClaxCode is an open-source agentic coding assistant for the terminal, inspired by Claude Code. It supports OpenAI-compatible providers, Anthropic, Ollama and custom HTTP APIs, with local sessions, memories, file snapshots and audit logs.
 
-当前版本：`0.1.2`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
+当前版本：`0.1.3`。项目仍处于早期阶段，欢迎 Issue、反馈和 PR。
 
 ## 核心特性
 
@@ -15,7 +15,7 @@ ClaxCode is an open-source agentic coding assistant for the terminal, inspired b
 - **分层记忆**：会话恢复、全局用户偏好、项目滚动摘要、项目/全局长期记忆。
 - **可扩展**：Skills、Shell Hooks、子代理和自动发现工具。
 - **双前端**：交互式 CLI + FastAPI SSE 服务，支持非交互式脚本调用。
-- **205 个自动化测试**：测试不需要真实 LLM 密钥或公网。
+- **209 个自动化测试**：测试不需要真实 LLM 密钥或公网。
 
 ## 安装
 
@@ -53,11 +53,13 @@ playwright install chromium                  # browser extra 安装后执行
 
 ## 首次配置
 
-直接运行根级初始化命令：
+运行根级全局配置命令：
 
 ```bash
-claxcode-cli init
+claxcode-cli init --global
 ```
+
+不加 `--global` 的 `claxcode-cli init` 用于初始化当前项目，只询问项目描述并生成 `AGENT.md`。
 
 按提示输入模型提供商、模型名称、接口地址和 API Key。API Key 使用隐藏输入；已有配置会先要求确认，不会直接覆盖。
 
@@ -167,11 +169,9 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | `/config` | 查看当前模型与运行配置 |
 | `/mode [mode]` | 查看或切换权限模式 |
 | `/clear` | 清除当前会话上下文 |
-| `/project [list\|switch\|info]` | 项目信息、列表与完整切换 |
 | `/memory` | 查看记忆总览 |
 | `/memory list\|search\|learn\|forget` | 管理长期记忆和全局自动记忆 |
 | `/compact` | 保存本次总结并融合更新项目滚动摘要 |
-| `/init` | 初始化项目信息并生成 `CLAUDE.md` |
 | `/skills [list\|reload\|create]` | 技能列表、热重载与创建 |
 | `/tools` | 列出全部工具 |
 | `/rollback [n\|list]` | 快照列表或回滚 |
@@ -179,7 +179,7 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | `/debug` | 切换调试输出 |
 | `/exit` `/quit` | 退出 |
 
-根级命令 `claxcode-cli init` 用于**全局模型配置**；交互命令 `/init` 用于**项目初始化**，两者用途不同。
+项目只能在顶层选择。运行 `claxcode-cli project` 或 `claxcode-cli project list` 会列出项目，输入编号即可进入；也可用 `claxcode-cli project <目录>` 或 `--project <目录>` 直接进入。会话中不再提供 `/project` 命令。
 
 ## 分层记忆
 
@@ -188,7 +188,7 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | 会话消息 | SQLite | 每轮保存，CLI 启动时恢复项目最近会话 |
 | 全局自动记忆 | `~/.claxcode/auto_memory.json` | 稳定的用户偏好和事实，下一轮即可生效 |
 | 长期记忆 | SQLite | 保存项目或全局历史事件，按当前问题进行中文相关性检索 |
-| 项目记忆 | SQLite + `CLAUDE.md` | 分别保存滚动项目状态与稳定项目约定 |
+| 项目记忆 | SQLite + `AGENT.md` | 分别保存滚动项目状态与稳定项目约定 |
 
 `/compact` 会分别生成本次总结和项目滚动摘要，并立即持久化清空后的会话。上下文过长时也会自动压缩早期消息。
 

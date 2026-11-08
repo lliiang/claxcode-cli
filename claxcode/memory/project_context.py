@@ -6,7 +6,7 @@ from claxcode.config import settings
 
 
 def load_project_context(project_path: Path) -> str:
-    """Load CLAUDE.md or .claxcode/context.md if present."""
+    """Load AGENT.md or .claxcode/context.md if present."""
     candidates = [
         project_path / settings.project_context_file,
         project_path / ".claxcode" / "context.md",
