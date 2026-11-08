@@ -105,6 +105,24 @@ LLM_MAX_TOKENS=4096
 
 > 不要把真实 API Key 提交到 Git。项目 `.env` 和用户全局配置都已设计为本地配置。
 
+## 根级命令参考
+
+| 命令 | 用途 |
+|---|---|
+| `claxcode-cli` | 在当前目录启动交互式会话 |
+| `claxcode-cli init` | 初始化当前项目，只询问描述并记录初始化时间 |
+| `claxcode-cli init --global` | 创建或更新用户全局模型配置 |
+| `claxcode-cli project` | 列出已初始化项目，输入编号进入 |
+| `claxcode-cli project list` | 同上，列出项目并按编号进入 |
+| `claxcode-cli project <目录>` | 直接进入指定项目目录 |
+| `claxcode-cli --project <目录>` | 使用指定项目启动，等价于直接选择目录 |
+| `claxcode-cli --mode <模式>` | 指定权限模式 |
+| `claxcode-cli --env <文件>` | 使用指定环境配置，优先于项目和全局配置 |
+| `claxcode-cli --print <提示>` | 非交互单发模式，正文输出到 stdout |
+| `claxcode-cli --version` / `-v` | 查看版本号 |
+
+`claxcode`（不带 `-cli`）用于启动 HTTP API 服务。
+
 ## 开始使用
 
 ```bash
@@ -140,6 +158,71 @@ claxcode-cli --version
 - Enter 提交，Alt+Enter 换行；Ctrl+C 取消运行中的任务或清空非空输入，空输入时不退出。
 - 使用 `/exit` 或 Ctrl+D 退出；`/tasks` 查看子代理，`/cancel [任务ID]` 取消当前进程中的任务。
 - `/` 补全内置命令、技能命令和常用参数。
+
+## 一次完整工作流程
+
+### 1. 配置模型
+
+```bash
+claxcode-cli init --global
+```
+
+选择供应商并填写模型、接口地址和 API Key。之后可用 `/config` 检查生效配置。
+
+### 2. 初始化项目
+
+```bash
+cd /path/to/project
+claxcode-cli init
+```
+
+输入一句项目描述即可。ClaxCode 会创建 `AGENT.md`，并在本地 SQLite 中记录项目名称、描述和初始化时间。
+
+### 3. 进入项目
+
+```bash
+claxcode-cli project
+```
+
+输入项目编号进入；也可以在项目目录直接运行 `claxcode-cli`。项目最近会话会自动恢复，使用 `/clear` 可清空当前上下文。
+
+### 4. 描述任务并引用文件
+
+```text
+帮我检查 @src/main.py 的启动逻辑，并修复发现的问题
+```
+
+`@` 后会模糊补全项目文件。引用失败会显示原因，不会静默假装文件已加载。
+
+### 5. 审批工具调用
+
+默认 `ask` 模式下，只读工具自动放行；写入或执行命令时可选择：
+
+- `y`：只允许这一次。
+- `a`：本次会话内始终允许该工具。
+- `N` 或直接回车：拒绝。
+
+可先使用 `claxcode-cli --mode plan` 只读分析，再切换到 `auto_safe` 或 `auto_edit` 执行。
+
+### 6. 控制输出和取消任务
+
+```text
+/debug on     # 查看工具参数、结果和调试上下文
+/debug off    # 只显示工具名称
+/tasks        # 查看当前会话的子代理
+/cancel       # 取消最近一个运行中的子代理
+```
+
+任务卡住时按 Ctrl+C 只取消当前工作，不会退出会话。空输入时 Ctrl+C 也不会退出；使用 `/exit` 或 Ctrl+D 退出。
+
+### 7. 验证、回滚和保存记忆
+
+```text
+/rollback list     # 查看编辑前快照
+/rollback 1        # 确认后回滚最近一批编辑
+/compact           # 保存本次总结并更新项目滚动摘要
+/memory            # 查看记忆总览
+```
 
 ## 权限与安全
 
@@ -194,6 +277,23 @@ API 服务默认仅监听 `127.0.0.1`，当前没有身份认证。不要直接�
 | 项目记忆 | SQLite + `AGENT.md` | 分别保存滚动项目状态与稳定项目约定 |
 
 `/compact` 会分别生成本次总结和项目滚动摘要，并立即持久化清空后的会话。上下文过长时也会自动压缩早期消息。
+
+### 记忆命令详解
+
+| 命令 | 用途 |
+|---|---|
+| `/memory` 或 `/memory overview` | 查看当前项目与全局记忆总览 |
+| `/memory history [n]` | 查看当前会话最近 n 条消息，默认 20 条 |
+| `/memory list` | 列出当前项目和全局长期记忆，显示完整 ID |
+| `/memory search <关键词>` | 按中文相关性搜索当前项目和全局长期记忆 |
+| `/memory learn <键> <值>` | 添加稳定的全局用户偏好或事实 |
+| `/memory facts` | 列出全部全局自动记忆 |
+| `/memory forget <键>` | 删除指定全局自动记忆 |
+| `/memory delete <完整ID>` | 删除指定长期记忆 |
+| `/memory export [文件]` | 导出当前项目长期记忆，默认 `memories_export.json` |
+| `/memory import <文件>` | 从 JSON 导入长期记忆 |
+
+`#内容` 是 `/memory learn` 的快速记录方式；新写入的自动记忆在当前会话下一轮即可生效。
 
 ## 工具与子代理
 
@@ -261,6 +361,33 @@ GET /health -> ok
 - `GET /tools`、`POST /tools/invoke`
 - `POST /subagents`、`GET /subagents/{id}`、`POST /subagents/{id}/stream`
 - `POST /subagents/{id}/cancel`：协作式取消任务并保存 `cancelled` 状态与部分结果
+
+### API 调用示例
+
+创建会话：
+
+```bash
+curl -X POST http://127.0.0.1:8000/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"name":"演示会话","project_path":".","permission_mode":"plan"}'
+```
+
+使用返回的会话 ID 发起 SSE 聊天：
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/sessions/<session-id>/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"说明当前项目结构"}'
+```
+
+创建只读子代理并取消任务：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/subagents?session_id=<session-id>&instruction=review&agent_type=explore"
+curl -X POST http://127.0.0.1:8000/subagents/<task-id>/cancel
+```
+
+API 的 `ask` 模式没有交互审批通道，写入和执行工具会被阻止。生产使用前请自行增加身份认证和网络访问控制。
 
 ## 当前限制与计划
 
